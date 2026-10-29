@@ -411,7 +411,7 @@ const MESSAGES = {
   ],
   fan: ['Fan-tastic crash. Truly a breeze.', 'Never fly into the spinny thing.', 'Blown away. By the fan, for once.'],
   lamp: ['Lights out!', 'She saw the light. Then she hit it.', 'Lamp: 1. Pilot: 0.'],
-  laundry: ['Defeated by the laundry. Again.', 'Folded faster than the washing.', 'Lost in the sock pile.'],
+  bags: ['Buried by the bag collection.', 'One more bag was one too many.', 'Crash-landed in the backpack pile.', 'She can stop buying bags any time. Any time.'],
   floor: ['Ran out of puff.', 'Gravity remains undefeated.', 'A soft landing. Mostly.'],
   ceiling: ['Too much gas, not enough ceiling.', 'Over-inflated. Hit the roof.', 'Ceiling inspection complete.'],
 };
@@ -479,21 +479,29 @@ const SHADE_COLORS = ['#ffcf5c', '#ff8fab', '#8fe3cf', '#b8a4ff', '#ffa45c'];
 
 function lampAngle(o) { return o.top.amp * Math.sin(o.top.omega * game.time + o.top.phase); }
 
+const BAG_DECOS = ['cat', 'bear', 'bow', 'star', 'plain'];
+const BAG_PATTERNS = ['dots', 'stars', 'hearts', 'plain'];
+
+// A stack of mini backpacks filling the space from the floor up to the gap.
 function buildPile(topY, floorY) {
-  const items = [], kinds = ['towel', 'shirt', 'jeans', 'sweater'];
+  const total = floorY - topY;
+  const n = Math.max(1, Math.round(total / 66));
+  const weights = Array.from({ length: n }, () => rand(0.85, 1.15));
+  const sum = weights.reduce((a, b) => a + b, 0);
+  const items = [];
   let y = floorY;
-  while (y > topY + 1) {
-    let h = rand(16, 28);
-    if (y - h < topY + 12) h = y - topY;   // last item reaches the gap exactly
-    items.push({ y: y - h, h, w: rand(84, 104), off: rand(-7, 7), color: pick(PILE_COLORS), kind: pick(kinds) });
+  weights.forEach((wt, i) => {
+    const h = i === n - 1 ? y - topY : total * wt / sum;   // last bag reaches the gap exactly
+    const color = pick(PILE_COLORS);
+    let trim = pick(PILE_COLORS);
+    if (trim === color) trim = '#f4f1ea';
+    items.push({
+      y: y - h, h, w: rand(68, 80), off: rand(-3, 3), tilt: rand(-0.05, 0.05),
+      color, trim, deco: pick(BAG_DECOS), pattern: pick(BAG_PATTERNS), face: Math.random() < 0.5,
+    });
     y -= h;
-  }
-  return {
-    items,
-    sockSide: Math.random() < 0.5 ? -1 : 1,
-    sockItem: items.length > 2 ? randInt(1, items.length - 2) : -1,  // never on the bottom item
-    sockColor: pick(PILE_COLORS),
-  };
+  });
+  return { items };
 }
 
 function spawnObstacle(x) {
@@ -516,7 +524,7 @@ function spawnObstacle(x) {
   } else {
     o.top = { type: 'fan', angle: rand(0, TAU), spin: rand(5, 9) * (Math.random() < 0.5 ? -1 : 1), bladeR: 56 };
   }
-  // Bottom hazard: a heap of laundry.
+  // Bottom hazard: a stack of mini backpacks.
   o.pile = buildPile(o.gapBottom, floorY);
 
   // Maybe a can of beans halfway between the previous obstacle and this one.
@@ -530,10 +538,10 @@ function spawnObstacle(x) {
   game.spawned++;
 }
 
-// Returns the cause of a hit ('fan' | 'lamp' | 'laundry') or null.
+// Returns the cause of a hit ('fan' | 'lamp' | 'bags') or null.
 function obstacleHit(o, px, py, r) {
   const top = CONFIG.ceilingY, floorY = H - CONFIG.floorHeight;
-  if (circleRect(px, py, r, o.x - 46, o.gapBottom + 4, 92, floorY - o.gapBottom)) return 'laundry';
+  if (circleRect(px, py, r, o.x - 40, o.gapBottom + 4, 80, floorY - o.gapBottom)) return 'bags';
   if (o.top.type === 'fan') {
     const by = o.gapTop - 9, R = o.top.bladeR;
     if (circleRect(px, py, r, o.x - R, by - 8, R * 2, 16)) return 'fan';
@@ -1324,42 +1332,125 @@ function drawLamp(o, sx) {
 }
 
 function drawPile(o, sx) {
-  const p = o.pile;
-  p.items.forEach((it, i) => {
+  o.pile.items.forEach((it, i) => {
     const wob = Math.sin(game.time * 2 + i * 1.3) * 0.8;
-    const x = sx + it.off + wob - it.w / 2, y = it.y;
-    ctx.fillStyle = it.color;
-    roundRect(ctx, x, y, it.w, it.h, Math.min(10, it.h * 0.45)); ctx.fill();
-    ctx.strokeStyle = 'rgba(40,20,60,0.55)'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.save();
-    roundRect(ctx, x, y, it.w, it.h, Math.min(10, it.h * 0.45)); ctx.clip();
-    if (it.kind === 'towel') {
-      ctx.fillStyle = 'rgba(255,255,255,0.45)';
-      ctx.fillRect(x, y + it.h * 0.25, it.w, 3); ctx.fillRect(x, y + it.h * 0.65, it.w, 3);
-    } else if (it.kind === 'shirt') {
-      ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(x + it.w / 2 - 7, y); ctx.lineTo(x + it.w / 2, y + 7); ctx.lineTo(x + it.w / 2 + 7, y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + 14, y); ctx.lineTo(x + 14, y + it.h); ctx.moveTo(x + it.w - 14, y); ctx.lineTo(x + it.w - 14, y + it.h); ctx.stroke();
-    } else if (it.kind === 'jeans') {
-      ctx.fillStyle = 'rgba(30,50,110,0.55)'; ctx.fillRect(x, y, it.w, it.h);
-      ctx.strokeStyle = '#ffcf5c'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x + 4, y + 4); ctx.lineTo(x + it.w - 4, y + 4); ctx.stroke(); ctx.setLineDash([]);
-    } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      for (let k = 0; k < it.w; k += 14) { ctx.beginPath(); ctx.arc(x + k + 7, y + it.h / 2, 2.2, 0, TAU); ctx.fill(); }
-    }
+    ctx.translate(sx + it.off + wob, it.y + it.h);
+    ctx.rotate(it.tilt);
+    drawBag(it);
     ctx.restore();
-    // a dangling sock
-    if (i === p.sockItem) {
-      const sxk = p.sockSide > 0 ? x + it.w - 6 : x + 6;
-      ctx.fillStyle = p.sockColor;
-      ctx.save(); ctx.translate(sxk, y + it.h / 2); ctx.rotate(Math.sin(game.time * 3 + i) * 0.15);
-      roundRect(ctx, -4, 0, 9, 22, 4); ctx.fill();
-      roundRect(ctx, -4 + (p.sockSide > 0 ? 0 : -6), 16, 15, 9, 4.5); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillRect(-4, 2, 9, 3);
-      ctx.restore();
-    }
   });
+}
+
+// Draws one mini backpack with its bottom centre at the origin.
+function drawBag(it) {
+  const w = it.w, top = -it.h, bodyTop = top + 10, bh = it.h - 10, x = -w / 2;
+  const outline = 'rgba(40,20,60,0.55)';
+  ctx.lineWidth = 1.5;
+
+  // carry handle
+  ctx.strokeStyle = it.trim; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(0, bodyTop + 2, 8, Math.PI, 0); ctx.stroke();
+  ctx.strokeStyle = outline; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, bodyTop + 2, 10, Math.PI, 0); ctx.stroke();
+
+  // ears go behind the body
+  ctx.fillStyle = it.color; ctx.strokeStyle = outline; ctx.lineWidth = 1.5;
+  if (it.deco === 'cat') {
+    for (const sgn of [-1, 1]) {
+      const ex = sgn * w * 0.3;
+      ctx.beginPath(); ctx.moveTo(ex - 9, bodyTop + 4); ctx.lineTo(ex + sgn * 3, top); ctx.lineTo(ex + 9, bodyTop + 4);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = it.trim;
+      ctx.beginPath(); ctx.moveTo(ex - 4, bodyTop + 2); ctx.lineTo(ex + sgn * 2, top + 5); ctx.lineTo(ex + 4, bodyTop + 2); ctx.fill();
+      ctx.fillStyle = it.color;
+    }
+  } else if (it.deco === 'bear') {
+    for (const sgn of [-1, 1]) {
+      const ex = sgn * w * 0.32;
+      ctx.beginPath(); ctx.arc(ex, bodyTop + 1, 8, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = it.trim; ctx.beginPath(); ctx.arc(ex, bodyTop + 1, 4, 0, TAU); ctx.fill();
+      ctx.fillStyle = it.color;
+    }
+  }
+
+  // body
+  roundRect(ctx, x, bodyTop, w, bh, Math.min(16, bh * 0.45)); ctx.fill(); ctx.stroke();
+  ctx.save();
+  roundRect(ctx, x, bodyTop, w, bh, Math.min(16, bh * 0.45)); ctx.clip();
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  if (it.pattern === 'dots') {
+    for (let k = 0; k < w; k += 13) for (let j = 0; j < bh; j += 11)
+      { ctx.beginPath(); ctx.arc(x + k + 6 + (j / 11 % 2) * 6, bodyTop + j + 5, 1.8, 0, TAU); ctx.fill(); }
+  } else if (it.pattern === 'stars') {
+    for (let k = 0; k < w; k += 18) drawSparkle(x + k + 9, bodyTop + 6 + (k / 18 % 2) * 6, 3);
+  } else if (it.pattern === 'hearts') {
+    for (let k = 0; k < w; k += 18) drawHeart(x + k + 9, bodyTop + 6 + (k / 18 % 2) * 5, 3);
+  }
+  // shine down the left side
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.fillRect(x + 5, bodyTop + 4, 4, bh - 8);
+  ctx.restore();
+
+  // front zip pocket
+  const pw = w * 0.66, ph = Math.max(8, bh * 0.42), py = -ph - 4;
+  ctx.fillStyle = it.trim;
+  roundRect(ctx, -pw / 2, py, pw, ph, Math.min(8, ph * 0.45)); ctx.fill();
+  ctx.strokeStyle = outline; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.strokeStyle = 'rgba(40,20,60,0.4)'; ctx.setLineDash([2, 2]);
+  ctx.beginPath(); ctx.moveTo(-pw / 2 + 5, py + 3); ctx.lineTo(pw / 2 - 5, py + 3); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#d9c27a';
+  roundRect(ctx, pw / 2 - 12, py + 2, 4, 8, 2); ctx.fill();
+
+  // cute face on the body, above the pocket
+  const faceY = (bodyTop + py) / 2 + 1;
+  if (it.face && py - bodyTop > 9) {
+    ctx.fillStyle = '#2a1d3a';
+    ctx.beginPath(); ctx.arc(-9, faceY, 2, 0, TAU); ctx.arc(9, faceY, 2, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#2a1d3a'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(0, faceY + 1, 3, 0.2, Math.PI - 0.2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,90,130,0.35)';
+    ctx.beginPath(); ctx.ellipse(-15, faceY + 3, 3.5, 2, 0, 0, TAU); ctx.ellipse(15, faceY + 3, 3.5, 2, 0, 0, TAU); ctx.fill();
+  }
+
+  // toppers that sit in front
+  if (it.deco === 'bow') {
+    const bx = w * 0.28, by = bodyTop + 2;
+    ctx.fillStyle = it.trim; ctx.strokeStyle = outline; ctx.lineWidth = 1.2;
+    for (const sgn of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + sgn * 10, by - 7); ctx.lineTo(bx + sgn * 10, by + 7);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(bx, by, 3, 0, TAU); ctx.fill(); ctx.stroke();
+  } else if (it.deco === 'star') {
+    ctx.fillStyle = '#ffd166'; ctx.strokeStyle = outline; ctx.lineWidth = 1;
+    drawStarShape(-w * 0.3, bodyTop + 1, 7); ctx.fill(); ctx.stroke();
+  }
+}
+
+function drawSparkle(x, y, r) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - r); ctx.lineTo(x + r * 0.3, y - r * 0.3); ctx.lineTo(x + r, y); ctx.lineTo(x + r * 0.3, y + r * 0.3);
+  ctx.lineTo(x, y + r); ctx.lineTo(x - r * 0.3, y + r * 0.3); ctx.lineTo(x - r, y); ctx.lineTo(x - r * 0.3, y - r * 0.3);
+  ctx.closePath(); ctx.fill();
+}
+
+function drawHeart(x, y, r) {
+  ctx.beginPath();
+  ctx.moveTo(x, y + r);
+  ctx.bezierCurveTo(x - r * 1.6, y - r * 0.2, x - r * 0.6, y - r * 1.4, x, y - r * 0.4);
+  ctx.bezierCurveTo(x + r * 0.6, y - r * 1.4, x + r * 1.6, y - r * 0.2, x, y + r);
+  ctx.fill();
+}
+
+function drawStarShape(x, y, r) {
+  ctx.beginPath();
+  for (let k = 0; k < 10; k++) {
+    const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? r * 0.45 : r;
+    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  ctx.closePath();
 }
 
 function drawBeanCan(x, y, s, rot) {

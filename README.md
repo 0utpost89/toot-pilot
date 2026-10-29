@@ -1,6 +1,6 @@
 # Toot Pilot
 
-A Flappy Bird-style browser game. A cartoon pilot in pyjamas flies through her house on a gas-powered jetpack, dodging ceiling fans, swinging lamps and piles of laundry.
+A Flappy Bird-style browser game. A cartoon pilot in pyjamas flies through her house on a gas-powered jetpack, dodging ceiling fans, swinging lamps and teetering stacks of mini backpacks.
 
 Everything is in one `index.html`: the art is drawn with canvas shapes, the sounds are made with the Web Audio API, and there are no external assets or libraries.
 
