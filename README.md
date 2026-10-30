@@ -7,7 +7,8 @@ Everything is in one `index.html`: the art is drawn with canvas shapes, the soun
 ## Play
 
 - **Online:** https://0utpost89.github.io/toot-pilot/
-- **Offline:** download `index.html` and open it in any modern browser.
+- **Install it as an app:** open the online link in Chrome (Android or desktop) and tap **INSTALL APP** on the title screen, or use the browser menu's *Install app* / *Add to Home screen*. On iPhone/iPad, open it in Safari, tap Share, then *Add to Home Screen*. It gets its own icon, runs full-screen and works offline.
+- **Offline file:** download `index.html` and open it in any modern browser.
 
 ## Controls
 
