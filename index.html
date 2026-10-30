@@ -76,18 +76,6 @@ const CONFIG = {
   lampSwingPerPoint: 0.012,
   lampSwingMax: 0.42,
 
-  // Gas tank
-  tankMax: 100,
-  tankDrainRate: 42,       // per second while holding
-  tankRefillRate: 16,      // per second while not holding
-  tankRefillDelay: 0.5,    // seconds after holding before refill starts
-  tapGasCost: 2,           // each tap costs a tiny bit (taps always work)
-
-  // Collectables
-  beanChance: 0.3,         // chance of a beans can between obstacles
-  beanPoints: 2,
-  beanRefill: 45,
-
   // Toot Coins (saved between games and spent in the shop)
   coinRowChance: 0.4,      // chance of a little arc of coins through a gap
   noteChance: 0.12,        // chance of a banknote between obstacles
@@ -98,7 +86,7 @@ const CONFIG = {
   // Fizz boost: a bottle of something sparkling
   fizzChance: 0.08,        // chance of a bottle between obstacles...
   fizzStartAfter: 4,       // ...once she's passed this many
-  fizzDuration: 6,         // seconds of full tank and double points
+  fizzDuration: 6,         // seconds of double points
   fizzWobble: 420,         // how tipsy the flight gets
 
   // Chocolate bar shield: absorbs one crash
@@ -439,9 +427,7 @@ const Sound = {
 
   blip()    { this.tone(700, 0.08, 'triangle', 0.14); this.tone(1050, 0.1, 'triangle', 0.12, 0.06); },
   click()   { this.tone(600, 0.06, 'square', 0.08); },
-  beans()   { [523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.12, 'square', 0.07, i * 0.06)); this.fart({ power: 0.4, delay: 0.26, noDouble: true }); },
   rankUp()  { [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.16, 'triangle', 0.13, i * 0.08)); },
-  sputter() { for (let i = 0; i < 3; i++) this.noise(0.04, rand(250, 500), 0.25, i * rand(0.05, 0.08)); },
   crash() {
     this.tone(440, 0.32, 'sine', 0.45, 0, 70);          // cartoon "bonk"
     this.tone(880, 0.12, 'square', 0.08, 0, 300);
@@ -537,7 +523,6 @@ const game = {
   newBest: false,
   rank: 0,
   obstacles: [],
-  beans: [],
   pickups: [],             // Toot Coins and fizz bottles
   runCoins: 0,
   particles: [],
@@ -555,8 +540,7 @@ const player = {
   x: 150, y: 300, prevY: 300, vy: 0,
   angle: 0, spin: 0,
   stretch: 0, stretchV: 0,       // squash & stretch spring
-  tank: CONFIG.tankMax,
-  holdTime: 0, thrusting: false, thrustTime: 0, sinceThrust: 99, sputterT: 0,
+  holdTime: 0, thrusting: false, thrustTime: 0,
   smugT: 0, panic: false, blinkT: 2,
   trailAcc: 0,
   fizzT: 0,                      // seconds of fizz boost left
@@ -568,7 +552,7 @@ function startGame() {
   const C = CONFIG;
   game.state = 'play';
   game.score = 0; game.rank = 0; game.newBest = false;
-  game.obstacles = []; game.beans = []; game.pickups = [];
+  game.obstacles = []; game.pickups = [];
   game.runCoins = 0; game.diedFizzy = false;
   game.spawned = 0;
   game.lastGapCenter = (C.ceilingY + H - C.floorHeight) / 2;
@@ -576,14 +560,14 @@ function startGame() {
   game.speed = C.scrollSpeed;
   Object.assign(player, {
     y: H * 0.42, vy: 0, angle: 0, spin: 0, stretch: 0, stretchV: 0,
-    tank: C.tankMax, holdTime: 0, thrusting: false, thrustTime: 0,
-    sinceThrust: 99, smugT: 0, panic: false, trailAcc: 0, fizzT: 0, shield: false, invulnT: 0,
+    holdTime: 0, thrusting: false, thrustTime: 0,
+    smugT: 0, panic: false, trailAcc: 0, fizzT: 0, shield: false, invulnT: 0,
   });
   player.prevY = player.y;
 }
 
 /* ---------------------------------------------------------------------
-   7. WORLD: OBSTACLES, BEANS & PARTICLES
+   7. WORLD: OBSTACLES, PICKUPS & PARTICLES
    --------------------------------------------------------------------- */
 const LAMP_SHADE_H = 36;
 const PILE_COLORS = ['#ff8fab', '#7ad3ff', '#ffd166', '#9be564', '#c49bff', '#ff9f68', '#f4f1ea', '#5f8dd3', '#ff6b6b'];
@@ -658,12 +642,11 @@ function spawnObstacle(x) {
   o.pile = buildPile(o.gapBottom, floorY);
 
   // Something to grab halfway between the previous obstacle and this one:
-  // a can of beans, a bottle of fizz or a Toot Coin banknote.
+  // a bottle of fizz, a chocolate bar or a Toot Coin banknote.
   if (d > 0) {
     const mx = x - C.obstacleSpacing / 2;
     const my = clamp((game.lastGapCenter + center) / 2 + rand(-40, 40), top + 45, floorY - 45);
-    if (Math.random() < C.beanChance) game.beans.push({ x: mx, baseY: my, y: my, phase: rand(0, TAU), taken: false });
-    else if (d >= C.fizzStartAfter && player.fizzT <= 0 && !game.pickups.some(q => q.type === 'fizz') &&
+    if (d >= C.fizzStartAfter && player.fizzT <= 0 && !game.pickups.some(q => q.type === 'fizz') &&
              Math.random() < C.fizzChance) addPickup('fizz', mx, my);
     else if (d >= C.chocStartAfter && !player.shield && !game.pickups.some(q => q.type === 'choc') &&
              Math.random() < C.chocChance) addPickup('choc', mx, my);
@@ -694,7 +677,6 @@ function collectPickup(q) {
   q.taken = true;
   if (q.type === 'fizz') {
     p.fizzT = C.fizzDuration;
-    p.tank = C.tankMax;
     p.smugT = 1.2;
     Sound.cork();
     emitSparkles(q.x, q.y, 16);
@@ -939,7 +921,6 @@ function flap() {
   p.vy = C.flapImpulse;
   p.holdTime = 0;
   p.stretch = 0.28; p.stretchV = 0;
-  p.tank = Math.max(0, p.tank - C.tapGasCost);
   const big = Math.random() < 0.12 || climbBefore > 0.8;
   const nz = nozzle();
   emitGas(nz.x, nz.y, nz.dx, nz.dy, 10 + Math.round(12 * climbBefore) + (big ? 12 : 0),
@@ -1063,39 +1044,22 @@ function updatePlay(dt) {
   game.speed = Math.min(C.maxScrollSpeed, C.scrollSpeed + game.score * C.scrollSpeedPerPoint);
   game.cam += game.speed * dt;
 
-  // --- Sustained thrust & gas tank ---
+  // --- Sustained thrust while held ---
   if (input.held) p.holdTime += dt;
-  const wantsThrust = input.held && p.holdTime >= C.holdDelay;
   const climb = clamp(-p.vy / -C.maxRiseSpeed, 0, 1);
-  if (wantsThrust && p.tank > 0) {
+  if (input.held && p.holdTime >= C.holdDelay) {
     p.vy -= C.holdThrust * dt;
-    p.tank = Math.max(0, p.tank - C.tankDrainRate * dt);
     p.thrusting = true;
     p.thrustTime += dt;
-    p.sinceThrust = 0;
     Sound.startHold();
     Sound.updateHold(climb, p.fizzT > 0);
-  } else {
-    if (p.thrusting) endThrust();
-    if (wantsThrust) {                      // holding with an empty tank: sad sputters
-      p.sputterT -= dt;
-      if (p.sputterT <= 0) {
-        p.sputterT = 0.3;
-        Sound.sputter();
-        const nz = nozzle();
-        emitGas(nz.x, nz.y, nz.dx, nz.dy, 3, 0.5, 0.5);
-      }
-    }
-    p.sinceThrust += dt;
-    if (p.sinceThrust > C.tankRefillDelay) p.tank = Math.min(C.tankMax, p.tank + C.tankRefillRate * dt);
-  }
+  } else if (p.thrusting) endThrust();
 
   p.invulnT = Math.max(0, p.invulnT - dt);
 
-  // --- Fizz boost: bottomless tank, and a slightly tipsy wobble ---
+  // --- Fizz boost: double points, and a slightly tipsy wobble ---
   if (p.fizzT > 0) {
     p.fizzT -= dt;
-    p.tank = C.tankMax;
     p.vy += Math.sin(game.time * 6.5) * C.fizzWobble * dt;
     if (p.fizzT <= 0) {
       Sound.fizzOut();
@@ -1125,7 +1089,6 @@ function updatePlay(dt) {
     game.nextObstacleX += C.obstacleSpacing;
   }
   game.obstacles = game.obstacles.filter(o => o.x > game.cam - 200);
-  game.beans = game.beans.filter(b => b.x > game.cam - 100 && !b.taken);
   game.pickups = game.pickups.filter(q => q.x > game.cam - 100 && !q.taken);
 
   const pwx = game.cam + p.x;
@@ -1149,22 +1112,7 @@ function updatePlay(dt) {
   }
   p.panic = near;
 
-  // --- Beans ---
-  for (const b of game.beans) {
-    b.y = b.baseY + Math.sin(game.time * 3 + b.phase) * 6;
-    if (!b.taken && Math.hypot(b.x - pwx, b.y - p.y) < r + 15) {
-      b.taken = true;
-      p.tank = Math.min(C.tankMax, p.tank + C.beanRefill);
-      p.smugT = 1;
-      const pts = C.beanPoints * (p.fizzT > 0 ? 2 : 1);
-      addScore(pts);
-      Sound.beans();
-      emitSparkles(b.x, b.y, 18);
-      popText(`+${pts} BEANS!`, b.x, b.y - 20, { size: 18, color: '#ffb347', max: 1.1 });
-    }
-  }
-
-  // --- Toot Coins & fizz bottles ---
+  // --- Toot Coins, fizz bottles & chocolate ---
   for (const q of game.pickups) {
     if (q.taken) continue;
     q.y = q.baseY + Math.sin(game.time * 3 + q.phase) * (q.type === 'coin' ? 3 : 6);
@@ -1867,18 +1815,6 @@ function drawBeanCan(x, y, s, rot) {
   ctx.restore();
 }
 
-function drawBeans(cam) {
-  for (const b of game.beans) {
-    if (b.taken) continue;
-    const sx = b.x - cam;
-    if (sx < -40 || sx > W + 40) continue;
-    const pulse = 0.5 + 0.5 * Math.sin(game.time * 6 + b.phase);
-    ctx.fillStyle = `rgba(255,220,120,${0.18 + 0.15 * pulse})`;
-    ctx.beginPath(); ctx.arc(sx, b.y, 24 + pulse * 4, 0, TAU); ctx.fill();
-    drawBeanCan(sx, b.y, 1, Math.sin(game.time * 2.5 + b.phase) * 0.2);
-  }
-}
-
 // A Toot Coin. `spin` turns it edge-on and back.
 function drawCoin(x, y, spin, s = 1) {
   const k = Math.abs(Math.cos(spin)) * 0.85 + 0.15;
@@ -2050,7 +1986,7 @@ function drawPlayer(y) {
   ctx.fillStyle = '#d7dde6'; roundRect(ctx, -20, -13, 9, 4, 2); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-15.5, -1, 3, 0, TAU); ctx.fill();
   ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
-  const needle = -2.4 + (p.tank / CONFIG.tankMax) * 2.4;
+  const needle = -0.3 + Math.sin(t * 3) * 0.15;   // gauge needle wobbles near full
   ctx.beginPath(); ctx.moveTo(-15.5, -1); ctx.lineTo(-15.5 + Math.cos(needle) * 2.5, -1 + Math.sin(needle) * 2.5); ctx.stroke();
   ctx.fillStyle = '#a9b3c1';
   ctx.beginPath(); ctx.moveTo(-19, 13); ctx.lineTo(-12, 13); ctx.lineTo(-11, 19); ctx.lineTo(-20, 19); ctx.closePath(); ctx.fill();
@@ -2296,35 +2232,20 @@ function drawMuteButton() {
   ctx.lineCap = 'butt';
 }
 
-function drawGasMeter() {
-  const p = player, C = CONFIG;
-  const x = 14, y = H - 40, w = Math.min(150, W * 0.4), h = 18;
-  const frac = p.tank / C.tankMax, fizz = p.fizzT > 0, low = frac < 0.25 && !fizz;
-  drawText(fizz ? 'FIZZ! x2' : 'GAS', x, y - 18, 14, fizz ? '#ff8fc8' : '#d8ff7a', 'left');
-  ctx.fillStyle = 'rgba(43,23,64,0.85)'; roundRect(ctx, x - 3, y - 3, w + 6, h + 6, 9); ctx.fill();
-  if (frac > 0) {
-    const g = ctx.createLinearGradient(x, 0, x + w, 0);
-    g.addColorStop(0, fizz ? '#ff6fb0' : '#6fd34a'); g.addColorStop(1, fizz ? '#ffd1e8' : '#d8ff7a');
-    ctx.fillStyle = low ? (Math.sin(game.time * 20) > 0 ? '#ff5d5d' : '#ffb35d') : g;
-    roundRect(ctx, x, y, Math.max(h, w * frac), h, 7); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.3)'; roundRect(ctx, x + 3, y + 2, Math.max(h, w * frac) - 6, 4, 2); ctx.fill();
+// Bottom-left: how much fizz is left, and whether a chocolate shield is ready.
+function drawPowerUps() {
+  const p = player, C = CONFIG, x = 14, y = H - 30, w = Math.min(130, W * 0.35);
+  let sx = x + 18;
+  if (p.fizzT > 0) {
+    drawText('FIZZ! x2', x, y - 16, 14, '#ff8fc8', 'left');
+    ctx.fillStyle = 'rgba(43,23,64,0.85)'; roundRect(ctx, x - 3, y - 3, w + 6, 14, 7); ctx.fill();
+    ctx.fillStyle = '#ff8fc8'; roundRect(ctx, x, y, Math.max(8, w * p.fizzT / C.fizzDuration), 8, 4); ctx.fill();
+    sx = x + w + 34;
   }
-  if (p.thrusting) {                            // bubbles while draining
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    for (let k = 0; k < 3; k++) {
-      const bx = x + ((game.time * 60 + k * 37) % Math.max(10, w * frac));
-      ctx.beginPath(); ctx.arc(bx, y + h / 2 + Math.sin(game.time * 10 + k) * 3, 2, 0, TAU); ctx.fill();
-    }
+  if (p.shield) {
+    drawText('SHIELD', sx, y - 16, 12, '#e8a860');
+    drawChocBar(sx, y + 4, Math.sin(game.time * 3) * 0.15, 0.9);
   }
-  if (p.shield) {                               // chocolate shield ready
-    drawChocBar(x + w + 30, y + h / 2, Math.sin(game.time * 3) * 0.15, 0.9);
-    drawText('SHIELD', x + w + 30, y - 18, 12, '#e8a860');
-  }
-  if (fizz) {                                    // how much fizz is left
-    ctx.fillStyle = 'rgba(43,23,64,0.85)'; roundRect(ctx, x - 3, y + h + 5, w + 6, 8, 4); ctx.fill();
-    ctx.fillStyle = '#ff8fc8'; roundRect(ctx, x, y + h + 6, Math.max(6, w * p.fizzT / C.fizzDuration), 6, 3); ctx.fill();
-  }
-  if (frac <= 0.001 && input.held) drawText('EMPTY!', x + w / 2, y + h / 2, 12, '#fff');
 }
 
 function drawCoinCounter(x, y, size = 18, align = 'left') {
@@ -2339,7 +2260,7 @@ function drawCoinCounter(x, y, size = 18, align = 'left') {
 function drawHUD() {
   const s = 46 * (1 + game.scorePulse * 0.25);
   drawText(String(game.score), W / 2, 82, s, '#fff');
-  if (game.state === 'play' || game.state === 'dying') { drawGasMeter(); drawCoinCounter(16, 24); }
+  if (game.state === 'play' || game.state === 'dying') { drawPowerUps(); drawCoinCounter(16, 24); }
 }
 
 function drawTitle() {
@@ -2358,8 +2279,8 @@ function drawTitle() {
 
   const lines = [
     ['TAP / CLICK / SPACE to toot upward', '#fff'],
-    ['HOLD for a turbo toot (uses gas)', '#fff'],
-    ['Beans refill your gas. Coins buy goodies!', '#ffb347'],
+    ['HOLD for a turbo toot', '#fff'],
+    ['Grab coins to spend in the shop!', '#ffb347'],
   ];
   const ls = Math.min(18, ...lines.map(([l]) => fitSize(l, 18, W - 30)));
   lines.forEach(([l, c], i) => drawText(l, W / 2, 400 + i * (ls + 10), ls, c));
@@ -2399,7 +2320,7 @@ function openShop() {
 }
 function closeShop() {
   game.state = 'title';
-  game.obstacles = []; game.beans = []; game.pickups = [];
+  game.obstacles = []; game.pickups = [];
   game.shopSel = null;
   Sound.click();
 }
@@ -2585,7 +2506,6 @@ function render(alpha) {
   drawBackground(camR);
   drawShadow(pyR);
   drawObstacles(camR);
-  drawBeans(camR);
   drawPickups(camR);
   drawParticles(camR, 'back');
   if (player.shield && game.state === 'play') {      // chocolate shield: a warm ring and a bar circling her
