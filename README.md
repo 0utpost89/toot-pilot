@@ -13,7 +13,8 @@ Everything is in one `index.html`: the art is drawn with canvas shapes, the soun
 
 - **Tap, click, Space, Up arrow or W:** toot upward
 - **Hold:** sustained thrust (a turbo toot)
-- **M** or the speaker button: mute
+- **M** or the speaker button: mute everything
+- **N** or the music-note button: music on/off
 
 Your high score is saved in your browser.
 
@@ -29,3 +30,7 @@ Keep an eye on the windows for the odd plane flying past, and fireworks (especia
 ## Tweaking
 
 Gravity, thrust, scroll speed, gap sizes, coin, fizz and chocolate chances are in the `CONFIG` object at the top of the script. Shop prices are in `PYJAMAS` and `BAG_DESIGNS`.
+
+## Music
+
+An original, bouncy mariachi-brass tune (two trumpets in harmony, oompah tuba, offbeat chords, light drums and the odd taxi "beep-beep") is synthesised live from the `SONG` data in the script, so there are no audio files. It speeds up a little as your score climbs; ranking up gets a trumpet fanfare, and crashing gets a sad trombone.
