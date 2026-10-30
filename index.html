@@ -6,7 +6,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1a1430">
+<meta name="apple-mobile-web-app-title" content="Toot Pilot">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Toot Pilot</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <style>
   html, body {
     margin: 0; padding: 0; width: 100%; height: 100%;
@@ -1086,6 +1091,19 @@ const MUSIC_BTN = { r: 20, get x() { return W - 72; }, y: 22 };
 function inMuteButton(x, y) { return Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < MUTE_BTN.r + 8; }
 function inMusicButton(x, y) { return Math.hypot(x - MUSIC_BTN.x, y - MUSIC_BTN.y) < MUSIC_BTN.r + 2; }
 function toggleMusic() { Music.toggle(); Sound.click(); }
+
+// Installing as an app: browsers that support it hand us a prompt we can show
+// from an "INSTALL APP" button. It must be shown on pointer *up* to count as
+// a tap on touch screens, so the button only arms it on the way down.
+let installPrompt = null, installArmed = false;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
+window.addEventListener('appinstalled', () => { installPrompt = null; });
+function showInstallPrompt() {
+  if (!installPrompt) return;
+  const pr = installPrompt;
+  installPrompt = null;
+  pr.prompt();
+}
 function toggleMute() { Sound.setMuted(!Sound.muted); if (!Sound.muted) Sound.click(); }
 
 function pressStart() { input.held = true; handlePress(); }
@@ -1118,7 +1136,11 @@ window.addEventListener('pointerdown', e => {
   input.pointers.add(e.pointerId);
   pressStart();
 }, { passive: false });
-const pointerUp = e => { Sound.unlock(); if (input.pointers.delete(e.pointerId)) pressEnd(); };
+const pointerUp = e => {
+  Sound.unlock();
+  if (installArmed) { installArmed = false; showInstallPrompt(); }
+  if (input.pointers.delete(e.pointerId)) pressEnd();
+};
 window.addEventListener('pointerup', pointerUp);
 window.addEventListener('pointercancel', pointerUp);
 
@@ -2605,6 +2627,7 @@ function drawTitle() {
   if (Math.sin(game.time * 5) > -0.3) drawText('Tap to start!', W / 2, 505, 26, '#ffe066');
   if (game.best > 0) drawText(`Best: ${game.best}  ·  ${RANKS[rankIndex(game.best)][1]}`, W / 2, 545, fitSize(`Best: ${game.best}  ·  ${RANKS[rankIndex(game.best)][1]}`, 16, W - 30), '#cfc2ea');
   drawShopButton(W / 2, 592);
+  if (installPrompt) uiButton(12, 8, 136, 30, 'INSTALL APP', () => { installArmed = true; }, '#9be564', 14);
 }
 
 // --- Buttons: drawn each frame and remembered so taps can find them ---
@@ -2890,6 +2913,11 @@ resize();
 buildWallpaper();
 canvas.focus();
 requestAnimationFrame(frame);
+
+// Keep a copy for offline play when served from the web (not as a local file).
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
 
 // Handy for debugging / tweaking from the console.
 window.TootPilot = { game, player, CONFIG, Sound };
