@@ -220,6 +220,7 @@ const Sound = {
       this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
       const d = this.noiseBuf.getChannelData(0);
       for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      setTimeout(() => this.makeHoldBufs(), 300);   // pre-render so the first held toot doesn't stutter
     }
     if (this.ctx.state === 'suspended') this.ctx.resume();
   },
@@ -232,96 +233,136 @@ const Sound = {
     if (m) this.stopHold();
   },
 
-  // The star of the show. A buzzy oscillator whose pitch AND volume are
-  // wobbled by a low-frequency oscillator ("brrrp"), plus a breathy noise
-  // layer. Every parameter is randomised so no two toots are alike.
+  // The star of the show. Rather than a smooth oscillator, each toot is built
+  // sample by sample as a train of irregular "flaps": every flap is a thump
+  // plus a damped, rubbery resonance and a puff of breath, and the gaps
+  // between flaps jitter, stall and sputter like the real thing. Every
+  // parameter is randomised so no two toots are alike.
+  synthFart(o) {
+    const sr = this.ctx.sampleRate, dur = o.dur, loop = !!o.loop;
+    const tailLen = loop ? 0 : 0.5;
+    const N = Math.ceil((dur + tailLen) * sr);
+    const buf = new Float32Array(N);
+    const F = o.formant, F2 = F * rand(2.1, 2.8), wet = o.wet;
+    let ph = 0, wander = 1, wanderTarget = 1, last = 0;
+
+    const flap = (t, a, T) => {
+      const i0 = Math.round(t * sr);
+      const tau = clamp(T * 0.3, 0.0012, 0.007);
+      const L = Math.round(Math.min(T * 1.6, tau * 6) * sr);
+      const thumpLen = T * rand(0.25, 0.4), phi = rand(0, 1);
+      for (let k = 0; k < L; k++) {
+        const tt = k / sr;
+        let v = Math.exp(-tt / tau) * (Math.sin(TAU * (F * tt + phi)) + 0.45 * Math.sin(TAU * F2 * tt));
+        if (tt < thumpLen) v += 0.55 * Math.sin(Math.PI * tt / thumpLen);
+        v += wet * (Math.random() * 2 - 1) * Math.exp(-tt / (T * 0.45));
+        let idx = i0 + k;
+        if (idx >= N) { if (!loop) break; idx -= N; }
+        buf[idx] += a * v;
+      }
+    };
+
+    // the main burst
+    let t = rand(0, 0.004);
+    while (t < dur) {
+      const p = t / dur;
+      if (t > ph) { ph = t + rand(0.03, 0.09); wanderTarget = rand(0.82, 1.2); }
+      wander += (wanderTarget - wander) * 0.15;
+      const f = o.f0 * Math.pow(o.endRatio, p) * wander;
+      const jit = o.jitter * (1 + (o.jitterGrow || 0) * p);
+      const T = (1 / f) * (1 + jit * (Math.random() * 2 - 1));
+      let env = loop ? 1 : Math.min(1, t / 0.02) * (p < 0.6 ? 1 - p * 0.25 : 0.85 * (1 - (p - 0.6) / 0.4) + 0.12);
+      env *= 1 + o.shimmer * (Math.random() * 2 - 1);
+      if (Math.random() < o.sputter) { t += T * rand(1.5, 3.5); continue; }   // a little stall
+      flap(t, env, T);
+      last = t;
+      t += T;
+    }
+    // trailing pops as it runs out of steam
+    if (!loop) {
+      let pt = last, pops = o.pops ?? randInt(0, 2), a = 0.4;
+      for (let k = 0; k < pops; k++) {
+        pt += rand(0.035, 0.09) * (1 + k * 0.4);
+        if (pt > dur + tailLen - 0.03) break;
+        flap(pt, a, 1 / (o.f0 * o.endRatio * rand(0.7, 1)));
+        a *= rand(0.5, 0.8);
+      }
+    }
+
+    // soften with a one-pole low-pass (two passes so a looped buffer has no seam), then block DC
+    const al = 1 - Math.exp(-TAU * o.cutoff / sr);
+    let y = 0;
+    for (let pass = loop ? 0 : 1; pass < 2; pass++)
+      for (let i = 0; i < N; i++) { y += al * (buf[i] - y); if (pass === 1) buf[i] = y; }
+    let x1 = 0, y1 = 0, peak = 0;
+    for (let i = 0; i < N; i++) { const yy = buf[i] - x1 + 0.995 * y1; x1 = buf[i]; buf[i] = y1 = yy; peak = Math.max(peak, Math.abs(yy)); }
+
+    const out = this.ctx.createBuffer(1, N, sr);
+    const d = out.getChannelData(0), g = 0.9 / (peak || 1);
+    for (let i = 0; i < N; i++) d[i] = buf[i] * g;
+    return out;
+  },
+
   fart(o = {}) {
     if (!this.on()) return;
     const c = this.ctx, power = o.power ?? 1;
     const t = c.currentTime + (o.delay || 0);
-    const squeaky = o.base === undefined && Math.random() < 0.15;
-    const dur = o.dur ?? rand(0.12, 0.36) * (0.7 + 0.6 * Math.min(power, 1.5));
-    const base = o.base ?? (squeaky ? rand(220, 380) : rand(55, 140));
-    const endRatio = o.endRatio ?? (Math.random() < 0.7 ? rand(0.45, 0.85) : rand(1.2, 1.8));
-    const vol = (o.vol ?? 1) * (0.35 + 0.25 * Math.min(power, 1.5));
-
-    const osc = c.createOscillator();
-    osc.type = o.type || pick(['sawtooth', 'sawtooth', 'square', 'triangle']);
-    osc.frequency.setValueAtTime(base, t);
-    osc.frequency.exponentialRampToValueAtTime(Math.max(20, base * endRatio), t + dur);
-
-    const lfo = c.createOscillator();
-    lfo.type = pick(['sine', 'triangle', 'square']);
-    const lfoStart = o.lfoStart ?? rand(16, 42), lfoEnd = o.lfoEnd ?? lfoStart * rand(0.5, 1.2);
-    lfo.frequency.setValueAtTime(lfoStart, t);
-    lfo.frequency.linearRampToValueAtTime(lfoEnd, t + dur);
-    const lfoDepth = c.createGain(); lfoDepth.gain.value = base * rand(0.2, 0.55);
-    lfo.connect(lfoDepth); lfoDepth.connect(osc.frequency);
-
-    const trem = c.createGain(); trem.gain.value = 0.65;
-    const tremDepth = c.createGain(); tremDepth.gain.value = rand(0.15, 0.35);
-    lfo.connect(tremDepth); tremDepth.connect(trem.gain);
-
-    const filt = c.createBiquadFilter(); filt.type = 'lowpass'; filt.Q.value = rand(1.5, 8);
-    filt.frequency.setValueAtTime(rand(600, 1500), t);
-    filt.frequency.exponentialRampToValueAtTime(rand(180, 450), t + dur);
-
-    const env = c.createGain();
-    env.gain.setValueAtTime(0.0001, t);
-    env.gain.exponentialRampToValueAtTime(vol, t + 0.015);
-    env.gain.setValueAtTime(vol, t + Math.max(0.02, dur * 0.55));
-    env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-
-    osc.connect(filt); filt.connect(trem); trem.connect(env); env.connect(this.master);
-
-    const n = c.createBufferSource(); n.buffer = this.noiseBuf;
-    const nf = c.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = rand(200, 650); nf.Q.value = rand(0.7, 2.5);
-    const ng = c.createGain(); ng.gain.value = rand(0.3, 0.8);
-    n.connect(nf); nf.connect(ng); ng.connect(trem);
-
-    const end = t + dur + 0.05;
-    osc.start(t); lfo.start(t); n.start(t, rand(0, 0.4));
-    osc.stop(end); lfo.stop(end); n.stop(end);
+    const squeaky = o.f0 === undefined && Math.random() < 0.12;
+    const dur = o.dur ?? rand(0.12, 0.3) * (0.7 + 0.6 * Math.min(power, 1.5));
+    const f0 = o.f0 ?? (squeaky ? rand(260, 420) : rand(110, 190));
+    const vol = (o.vol ?? 1) * (0.4 + 0.25 * Math.min(power, 1.5));
+    const buffer = this.synthFart({
+      dur, f0,
+      endRatio: o.endRatio ?? (Math.random() < 0.7 ? rand(0.55, 0.85) : rand(1.1, 1.4)),
+      jitter: o.jitter ?? (squeaky ? rand(0.03, 0.07) : rand(0.06, 0.14)),
+      jitterGrow: o.jitterGrow,
+      shimmer: rand(0.15, 0.35),
+      formant: o.formant ?? (squeaky ? f0 * rand(2, 2.8) : rand(300, 520)),
+      wet: o.wet ?? (squeaky ? rand(0.1, 0.2) : rand(0.12, 0.35)),
+      sputter: o.sputter ?? (squeaky ? 0.01 : rand(0, 0.07)),
+      cutoff: squeaky ? 2800 : rand(1600, 2400),
+      pops: o.pops,
+    });
+    const src = c.createBufferSource(); src.buffer = buffer;
+    const g = c.createGain(); g.gain.value = vol;
+    src.connect(g); g.connect(this.master);
+    src.start(t);
 
     // Occasionally a little encore.
     if (!o.delay && !o.noDouble && Math.random() < 0.15) {
-      this.fart({ power: power * 0.6, delay: dur + rand(0.02, 0.08), noDouble: true });
+      this.fart({ power: power * 0.6, delay: dur + rand(0.03, 0.1), noDouble: true });
     }
   },
 
-  // Sustained toot while the button is held.
+  makeHoldBufs() {
+    if (this.holdBufs) return;
+    this.holdBufs = [0, 1, 2].map(() => this.synthFart({
+      dur: 2.5, loop: true, f0: rand(115, 150), endRatio: 1, jitter: rand(0.07, 0.12), shimmer: 0.3,
+      formant: rand(320, 460), wet: rand(0.15, 0.3), sputter: 0.03, cutoff: 2000,
+    }));
+  },
+
+  // Sustained toot while the button is held: a looping flap train whose
+  // speed wanders so it stays lively.
   startHold() {
     if (!this.on() || this.hold) return;
-    const c = this.ctx, t = c.currentTime, base = rand(65, 115);
-    const osc = c.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = base;
-    const lfo = c.createOscillator(); lfo.type = 'triangle'; lfo.frequency.value = rand(18, 32);
-    const ld = c.createGain(); ld.gain.value = base * 0.4;
-    lfo.connect(ld); ld.connect(osc.frequency);
-    const trem = c.createGain(); trem.gain.value = 0.65;
-    const td = c.createGain(); td.gain.value = 0.3;
-    lfo.connect(td); td.connect(trem.gain);
-    const filt = c.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 900; filt.Q.value = 5;
+    const c = this.ctx, t = c.currentTime;
+    this.makeHoldBufs();
+    const src = c.createBufferSource(); src.buffer = pick(this.holdBufs); src.loop = true;
     const env = c.createGain();
     env.gain.setValueAtTime(0.0001, t);
-    env.gain.exponentialRampToValueAtTime(0.3, t + 0.05);
-    const n = c.createBufferSource(); n.buffer = this.noiseBuf; n.loop = true;
-    const nf = c.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 400; nf.Q.value = 1.2;
-    const ng = c.createGain(); ng.gain.value = 0.5;
-    n.connect(nf); nf.connect(ng); ng.connect(trem);
-    osc.connect(filt); filt.connect(trem); trem.connect(env); env.connect(this.master);
-    osc.start(t); lfo.start(t); n.start(t);
-    this.hold = { osc, lfo, ld, filt, env, n, base, next: 0 };
+    env.gain.exponentialRampToValueAtTime(0.32, t + 0.04);
+    src.connect(env); env.connect(this.master);
+    src.start(t, rand(0, 2));
+    this.hold = { src, env, next: 0 };
   },
-  // Wander the pitch/flutter randomly so the held toot stays lively.
   updateHold(intensity) {
     const h = this.hold;
     if (!h) return;
     const t = this.ctx.currentTime;
     if (t > h.next) {
       h.next = t + rand(0.08, 0.2);
-      h.osc.frequency.setTargetAtTime(h.base * rand(0.75, 1.35) * (1 + intensity * 0.3), t, 0.05);
-      h.lfo.frequency.setTargetAtTime(rand(14, 40), t, 0.05);
-      h.filt.frequency.setTargetAtTime(rand(500, 1400), t, 0.05);
+      h.src.playbackRate.setTargetAtTime(rand(0.85, 1.2) * (1 + intensity * 0.2), t, 0.05);
     }
   },
   stopHold() {
@@ -331,7 +372,7 @@ const Sound = {
     if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t);
     else { g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); }
     g.setTargetAtTime(0, t, 0.03);
-    h.osc.stop(t + 0.25); h.lfo.stop(t + 0.25); h.n.stop(t + 0.25);
+    h.src.stop(t + 0.25);
     this.hold = null;
   },
 
@@ -371,7 +412,7 @@ const Sound = {
     this.noise(0.18, 1200, 0.5, 0, 'lowpass');
   },
   bounce()  { this.tone(260, 0.12, 'sine', 0.2, 0, 120); },
-  deathFart() { this.fart({ dur: 1.5, base: 150, endRatio: 0.28, vol: 1, power: 1.2, lfoStart: 34, lfoEnd: 6, delay: 0.12, type: 'sawtooth' }); },
+  deathFart() { this.fart({ dur: 1.2, f0: 210, endRatio: 0.4, jitter: 0.07, jitterGrow: 2, formant: 420, wet: 0.3, sputter: 0.05, pops: 4, vol: 1, power: 1.2, delay: 0.12 }); },
 };
 
 /* ---------------------------------------------------------------------
