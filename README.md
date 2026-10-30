@@ -22,9 +22,10 @@ Collect the cans of baked beans for bonus points and a gas refill. Your high sco
 - Grab **Toot Coins** as you fly: coins are worth 1, banknotes 5, and the rare bundle near a gap's edge is worth 25. They're saved in your browser between games.
 - Spend them in the **shop** (button on the title and game-over screens, or press **S**): new pyjamas to wear, and special mini backpacks that start turning up in the floor stacks.
 - Look out for the **fizz bottle**: a few seconds of bottomless gas and double points, with a slightly tipsy wobble.
+- Grab a **chocolate bar** for a shield: the next crash just snaps the chocolate instead of ending your run.
 
 Keep an eye on the windows for the odd plane flying past, and fireworks (especially when you rank up).
 
 ## Tweaking
 
-Gravity, thrust, scroll speed, gap sizes, the tank's drain and refill rates, coin and fizz chances are in the `CONFIG` object at the top of the script. Shop prices are in `PYJAMAS` and `BAG_DESIGNS`.
+Gravity, thrust, scroll speed, gap sizes, the tank's drain and refill rates, coin, fizz and chocolate chances are in the `CONFIG` object at the top of the script. Shop prices are in `PYJAMAS` and `BAG_DESIGNS`.

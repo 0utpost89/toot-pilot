@@ -101,6 +101,11 @@ const CONFIG = {
   fizzDuration: 6,         // seconds of full tank and double points
   fizzWobble: 420,         // how tipsy the flight gets
 
+  // Chocolate bar shield: absorbs one crash
+  chocChance: 0.07,        // chance of a chocolate bar between obstacles...
+  chocStartAfter: 3,       // ...once she's passed this many
+  shieldGrace: 1.3,        // seconds of safety after the shield snaps
+
   // Player
   playerX: 0.28,           // fraction of view width (capped at 260px)
   playerRadius: 15,        // collision radius
@@ -456,6 +461,12 @@ const Sound = {
     this.noise(0.7, 6000, 0.1, 0.05, 'highpass');                     // fizzzz
     this.bubbles(0.8, 0.05);
   },
+  choc()    { this.noise(0.12, 7000, 0.12, 0, 'highpass'); this.tone(523, 0.1, 'triangle', 0.12, 0.04); this.tone(784, 0.18, 'triangle', 0.12, 0.12); },
+  snap() {
+    this.noise(0.06, 3000, 0.6, 0, 'bandpass', 1.5);
+    this.noise(0.05, 1400, 0.4, 0.05, 'bandpass', 2);
+    this.tone(200, 0.16, 'square', 0.1, 0, 90);
+  },
   fizzOut() { this.tone(900, 0.25, 'sine', 0.08, 0, 300); },
   firework() {
     this.noise(0.4, 160, 0.16, 0, 'lowpass');
@@ -549,6 +560,7 @@ const player = {
   smugT: 0, panic: false, blinkT: 2,
   trailAcc: 0,
   fizzT: 0,                      // seconds of fizz boost left
+  shield: false, invulnT: 0,     // chocolate shield, and the safe spell after it snaps
   expression: 'happy',
 };
 
@@ -565,7 +577,7 @@ function startGame() {
   Object.assign(player, {
     y: H * 0.42, vy: 0, angle: 0, spin: 0, stretch: 0, stretchV: 0,
     tank: C.tankMax, holdTime: 0, thrusting: false, thrustTime: 0,
-    sinceThrust: 99, smugT: 0, panic: false, trailAcc: 0, fizzT: 0,
+    sinceThrust: 99, smugT: 0, panic: false, trailAcc: 0, fizzT: 0, shield: false, invulnT: 0,
   });
   player.prevY = player.y;
 }
@@ -653,6 +665,8 @@ function spawnObstacle(x) {
     if (Math.random() < C.beanChance) game.beans.push({ x: mx, baseY: my, y: my, phase: rand(0, TAU), taken: false });
     else if (d >= C.fizzStartAfter && player.fizzT <= 0 && !game.pickups.some(q => q.type === 'fizz') &&
              Math.random() < C.fizzChance) addPickup('fizz', mx, my);
+    else if (d >= C.chocStartAfter && !player.shield && !game.pickups.some(q => q.type === 'choc') &&
+             Math.random() < C.chocChance) addPickup('choc', mx, my);
     else if (Math.random() < C.noteChance) addPickup('note', mx, my);
   }
   // Toot Coins: a little arc through the gap, or rarely a risky bundle of notes near its edge.
@@ -688,6 +702,14 @@ function collectPickup(q) {
     popText('FIZZ BOOST!', q.x, q.y - 26, { size: 22, color: '#ff8fc8', max: 1.4, sub: 'Double points!' });
     return;
   }
+  if (q.type === 'choc') {
+    p.shield = true;
+    p.smugT = 1.2;
+    Sound.choc();
+    emitSparkles(q.x, q.y, 14);
+    popText('CHOCOLATE SHIELD!', q.x, q.y - 26, { size: 20, color: '#e8a860', max: 1.4, sub: 'One free bump' });
+    return;
+  }
   const v = q.type === 'coin' ? 1 : q.type === 'note' ? C.noteValue : C.stackValue;
   game.runCoins += v;
   wallet.add(v);
@@ -700,6 +722,21 @@ function collectPickup(q) {
     emitSparkles(q.x, q.y, 14);
     popText(`+${v} TOOT COINS!`, q.x, q.y - 22, { size: 16, color: '#ffd65a', max: 1.1 });
   }
+}
+
+// The chocolate shield takes the hit: snap!
+function snapShield() {
+  const p = player, x = game.cam + p.x;
+  p.shield = false;
+  p.invulnT = CONFIG.shieldGrace;
+  game.shake = Math.max(game.shake, 8);
+  Sound.snap();
+  for (let i = 0; i < 12; i++) {
+    const a = rand(0, TAU), sp = rand(120, 300);
+    addParticle({ type: 'chunk', x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 140,
+      r0: rand(3, 5.5), rot: rand(0, TAU), vr: rand(-12, 12), life: 0, max: rand(0.6, 1) });
+  }
+  popText('SNAP!', x + 18, p.y - 30, { size: 28, color: '#e8a860', max: 1.1, sub: 'Saved by chocolate!' });
 }
 
 // Returns the cause of a hit ('fan' | 'lamp' | 'bags') or null.
@@ -787,7 +824,7 @@ function updateParticles(dt) {
     if (q.type === 'gas') {
       const k = 1 - Math.min(1, 2.2 * dt);
       q.vx *= k; q.vy = q.vy * k - 28 * dt;   // gas drifts upward as it slows
-    } else if (q.type === 'star') {
+    } else if (q.type === 'star' || q.type === 'chunk') {
       q.vy += 700 * dt; q.rot += q.vr * dt;
     } else if (q.type === 'spark') {
       q.vx *= 1 - 3 * dt; q.vy *= 1 - 3 * dt;
@@ -934,7 +971,7 @@ function die(cause) {
   game.deathCause = cause;
   game.deathSpeed = game.speed;
   game.diedFizzy = p.fizzT > 0;
-  p.fizzT = 0;
+  p.fizzT = 0; p.shield = false; p.invulnT = 0;
   if (p.thrusting) { p.thrusting = false; Sound.stopHold(); }
   p.vy = cause === 'floor' ? -460 : cause === 'ceiling' ? 120 : -320;
   p.spin = (Math.random() < 0.5 ? -1 : 1) * rand(10, 15);
@@ -1053,6 +1090,8 @@ function updatePlay(dt) {
     if (p.sinceThrust > C.tankRefillDelay) p.tank = Math.min(C.tankMax, p.tank + C.tankRefillRate * dt);
   }
 
+  p.invulnT = Math.max(0, p.invulnT - dt);
+
   // --- Fizz boost: bottomless tank, and a slightly tipsy wobble ---
   if (p.fizzT > 0) {
     p.fizzT -= dt;
@@ -1102,7 +1141,9 @@ function updatePlay(dt) {
     const dx = o.x - pwx;
     if (dx > -160 && dx < 160) {
       const hit = obstacleHit(o, pwx, p.y, r * 0.9);
-      if (hit) { die(hit); return; }
+      if (hit && p.invulnT <= 0) {
+        if (p.shield) snapShield(); else { die(hit); return; }
+      }
       if (dx > -60 && obstacleHit(o, pwx, p.y, r + 24)) near = true;
     }
   }
@@ -1131,8 +1172,19 @@ function updatePlay(dt) {
   }
 
   // --- Floor & ceiling ---
-  if (p.y - r < C.ceilingY) { p.y = C.ceilingY + r; die('ceiling'); return; }
-  if (p.y + r > floorY) { p.y = floorY - r; die('floor'); return; }
+  // (a shield, or the safe spell after one snaps, turns these into bounces)
+  if (p.y - r < C.ceilingY) {
+    p.y = C.ceilingY + r;
+    if (p.invulnT > 0) p.vy = Math.max(p.vy, 120);
+    else if (p.shield) { snapShield(); p.vy = 200; }
+    else { die('ceiling'); return; }
+  }
+  if (p.y + r > floorY) {
+    p.y = floorY - r;
+    if (p.invulnT > 0) p.vy = Math.min(p.vy, -420);
+    else if (p.shield) { snapShield(); p.vy = -480; }
+    else { die('floor'); return; }
+  }
 }
 
 function updateDying(dt) {
@@ -1894,6 +1946,23 @@ function drawFizzBottle(x, y, rot, s = 1) {
   ctx.restore();
 }
 
+// A wrapped chocolate bar with the foil peeled back at one end.
+function drawChocBar(x, y, rot, s = 1) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  ctx.fillStyle = '#6b3a1e'; roundRect(ctx, -17, -8, 14, 16, 2); ctx.fill();          // exposed chocolate
+  ctx.strokeStyle = '#4a2511'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(-10, -8); ctx.lineTo(-10, 8); ctx.moveTo(-17, 0); ctx.lineTo(-3, 0); ctx.stroke();
+  ctx.fillStyle = '#8f5530'; ctx.fillRect(-16, -7, 5, 2); ctx.fillRect(-9, -7, 5, 2); ctx.fillRect(-16, 1, 5, 2); ctx.fillRect(-9, 1, 5, 2);
+  ctx.fillStyle = '#d9dde4';                                                            // torn foil
+  ctx.beginPath(); ctx.moveTo(-5, -9); ctx.lineTo(-8, -5); ctx.lineTo(-5, -1); ctx.lineTo(-8, 3); ctx.lineTo(-5, 9); ctx.lineTo(-1, 9); ctx.lineTo(-1, -9); ctx.fill();
+  ctx.fillStyle = '#e0457b'; roundRect(ctx, -2, -9, 21, 18, 2); ctx.fill();              // wrapper
+  ctx.strokeStyle = '#8a1f45'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = '#f5c542'; ctx.fillRect(-2, -3, 21, 6);
+  ctx.fillStyle = '#e0457b'; drawHeart(8.5, -0.5, 2.6);
+  ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(0, -7, 17, 2);
+  ctx.restore();
+}
+
 function drawPickups(cam) {
   for (const q of game.pickups) {
     if (q.taken) continue;
@@ -1901,14 +1970,15 @@ function drawPickups(cam) {
     if (sx < -40 || sx > W + 40) continue;
     const pulse = 0.5 + 0.5 * Math.sin(game.time * 6 + q.phase);
     if (q.type === 'coin') { drawCoin(sx, q.y, game.time * 4 + q.phase); continue; }
-    ctx.fillStyle = q.type === 'fizz' ? `rgba(255,140,200,${0.2 + 0.15 * pulse})` : `rgba(255,214,90,${0.16 + 0.14 * pulse})`;
+    ctx.fillStyle = q.type === 'fizz' ? `rgba(255,140,200,${0.2 + 0.15 * pulse})` : q.type === 'choc' ? `rgba(232,168,96,${0.2 + 0.15 * pulse})` : `rgba(255,214,90,${0.16 + 0.14 * pulse})`;
     ctx.beginPath(); ctx.arc(sx, q.y, (q.type === 'fizz' ? 28 : 22) + pulse * 4, 0, TAU); ctx.fill();
     const flutter = Math.sin(game.time * 5 + q.phase) * 0.25;
     if (q.type === 'note') drawNote(sx, q.y, flutter, String(CONFIG.noteValue));
     else if (q.type === 'stack') {
       for (let k = 2; k >= 0; k--) drawNote(sx + k * 2 - 2, q.y + k * 3 - 3, -0.08 + k * 0.06, String(CONFIG.stackValue));
       ctx.fillStyle = '#ff8fc8'; ctx.fillRect(sx - 3, q.y - 9, 6, 18);
-    } else drawFizzBottle(sx, q.y, flutter * 0.6);
+    } else if (q.type === 'choc') drawChocBar(sx, q.y, flutter * 0.5);
+    else drawFizzBottle(sx, q.y, flutter * 0.6);
   }
 }
 
@@ -2160,6 +2230,12 @@ function drawParticles(cam, layer) {
     } else if (q.type === 'spark') {
       ctx.globalAlpha = 1 - t;
       ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(x, y, q.r0 * (1 - t * 0.5), 0, TAU); ctx.fill();
+    } else if (q.type === 'chunk') {
+      ctx.globalAlpha = 1 - t * t;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(q.rot);
+      ctx.fillStyle = '#6b3a1e'; ctx.fillRect(-q.r0, -q.r0, q.r0 * 2, q.r0 * 2);
+      ctx.fillStyle = '#8f5530'; ctx.fillRect(-q.r0, -q.r0, q.r0 * 2, q.r0 * 0.6);
+      ctx.restore();
     } else if (q.type === 'bubble') {
       ctx.globalAlpha = (1 - t) * 0.9;
       ctx.strokeStyle = '#fff0f7'; ctx.lineWidth = 1;
@@ -2239,6 +2315,10 @@ function drawGasMeter() {
       const bx = x + ((game.time * 60 + k * 37) % Math.max(10, w * frac));
       ctx.beginPath(); ctx.arc(bx, y + h / 2 + Math.sin(game.time * 10 + k) * 3, 2, 0, TAU); ctx.fill();
     }
+  }
+  if (p.shield) {                               // chocolate shield ready
+    drawChocBar(x + w + 30, y + h / 2, Math.sin(game.time * 3) * 0.15, 0.9);
+    drawText('SHIELD', x + w + 30, y - 18, 12, '#e8a860');
   }
   if (fizz) {                                    // how much fizz is left
     ctx.fillStyle = 'rgba(43,23,64,0.85)'; roundRect(ctx, x - 3, y + h + 5, w + 6, 8, 4); ctx.fill();
@@ -2508,7 +2588,17 @@ function render(alpha) {
   drawBeans(camR);
   drawPickups(camR);
   drawParticles(camR, 'back');
+  if (player.shield && game.state === 'play') {      // chocolate shield: a warm ring and a bar circling her
+    const pulse = 0.5 + 0.5 * Math.sin(game.time * 5);
+    ctx.strokeStyle = `rgba(232,168,96,${0.45 + 0.3 * pulse})`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(player.x, pyR, 30 + pulse * 2, 0, TAU); ctx.stroke();
+    const a = game.time * 2.4;
+    drawChocBar(player.x + Math.cos(a) * 32, pyR + Math.sin(a) * 32, a + Math.PI / 2, 0.55);
+  }
+  const blink = player.invulnT > 0 && game.state === 'play' && Math.sin(game.time * 40) > 0;
+  if (blink) ctx.globalAlpha = 0.4;
   drawPlayer(pyR);
+  ctx.globalAlpha = 1;
   drawParticles(camR, 'front');
   ctx.restore();
 
