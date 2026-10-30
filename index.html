@@ -913,6 +913,7 @@ window.addEventListener('keydown', e => {
     return;
   }
   if (e.code === 'KeyS' && (game.state === 'title' || game.state === 'over')) { Sound.unlock(); openShop(); return; }
+  if (e.code === 'Escape' && game.state === 'over') { goToMenu(); return; }
   if (!ACTION_KEYS.has(e.code)) return;
   e.preventDefault();
   if (e.repeat || input.keys.has(e.code)) return;
@@ -2387,8 +2388,8 @@ function uiButton(x, y, w, h, label, onTap, fill = '#ff8fc8', size = 18, radius 
   if (label) drawText(label, x + w / 2, y + h / 2 + 1, fitSize(label, size, w - 16), '#fff');
   uiButtons.push({ x, y, w, h, onTap });
 }
-function drawShopButton(cx, cy) {
-  const w = 190, h = 42;
+function drawShopButton(cx, cy, w = 190) {
+  const h = 42;
   uiButton(cx - w / 2, cy - h / 2, w, h, '', openShop, '#ff8fc8');
   drawText('SHOP', cx - 38, cy + 1, 20, '#fff');
   drawCoinCounter(cx + 2, cy, 17);
@@ -2401,10 +2402,14 @@ function openShop() {
   game.shopSel = null; game.shopNote = null;
   Sound.click();
 }
-function closeShop() {
+function closeShop() { goToMenu(); }
+
+// Back to the title screen, clearing away the last run.
+function goToMenu() {
+  if (game.state === 'over' && game.overT < 0.3) return;
   game.state = 'title';
-  game.obstacles = []; game.pickups = [];
-  game.shopSel = null;
+  game.obstacles = []; game.pickups = []; game.fireworks = [];
+  game.shopSel = null; game.say = null; game.sayT = rand(3, 6);
   Sound.click();
 }
 function shopNote(text, color = '#2b1740') { game.shopNote = { text, color, t: game.time }; }
@@ -2574,7 +2579,12 @@ function drawGameOver() {
 
   if (game.overT > 0.6 && Math.sin(game.time * 5) > -0.3) drawText('Tap to try again', 0, ph / 2 - 22, 22, '#fff');
   ctx.restore();
-  if (game.overT > 0.3) drawShopButton(W / 2, Math.min(H - 26, H / 2 + ph / 2 + 30));
+  if (game.overT > 0.3) {                       // MENU and SHOP buttons under the panel
+    const total = Math.min(W - 20, 350), mw = Math.round(total * 0.38), sw = total - mw - 12;
+    const y = Math.min(H - 26, H / 2 + ph / 2 + 30), x0 = W / 2 - total / 2;
+    uiButton(x0, y - 21, mw, 42, 'MENU', goToMenu, '#9be564', 20);
+    drawShopButton(x0 + mw + 12 + sw / 2, y, sw);
+  }
 }
 
 function render(alpha) {
