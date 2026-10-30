@@ -94,6 +94,9 @@ const CONFIG = {
   chocStartAfter: 3,       // ...once she's passed this many
   shieldGrace: 1.3,        // seconds of safety after the shield snaps
 
+  // Sound
+  fartStyle: 'slap',       // 'rasp' (raspberry buzz), 'flutter' (brrrrp) or 'slap' (wet pbbbt)
+
   // Player
   playerX: 0.28,           // fraction of view width (capped at 260px)
   playerRadius: 15,        // collision radius
@@ -223,6 +226,13 @@ function buildWallpaper() {
 /* ---------------------------------------------------------------------
    4. AUDIO — everything synthesised with Web Audio
    --------------------------------------------------------------------- */
+// Pitch, wetness and brightness ranges for each toot style ([min, max]).
+const FART_STYLES = {
+  rasp:    { f0: [80, 150],  hold: [95, 125],  wet: [0.15, 0.35], cutoff: [2200, 3200] },
+  flutter: { f0: [150, 240], hold: [170, 210], wet: [0.1, 0.25],  cutoff: [2400, 3200] },
+  slap:    { f0: [32, 60],   hold: [38, 50],   wet: [0.45, 0.75], cutoff: [1800, 2400] },
+};
+
 const Sound = {
   ctx: null, master: null, noiseBuf: null, hold: null,
   muted: store.get('tootPilot.muted', '0') === '1',
@@ -256,32 +266,38 @@ const Sound = {
     if (m) this.stopHold();
   },
 
-  // The star of the show. Rather than a smooth oscillator, each toot is built
-  // sample by sample as a train of irregular "flaps": every flap is a thump
-  // plus a damped, rubbery resonance and a puff of breath, and the gaps
-  // between flaps jitter, stall and sputter like the real thing. Every
+  // The star of the show. Each toot is built sample by sample as a train of
+  // irregular "flaps", like a raspberry blown with the lips: a puff of
+  // pressure that opens, a sharp slap as it closes, a tiny cheek buzz and a
+  // breath of air. The gaps between flaps jitter, stall and sputter. Every
   // parameter is randomised so no two toots are alike.
   synthFart(o) {
     const sr = this.ctx.sampleRate, dur = o.dur, loop = !!o.loop;
     const tailLen = loop ? 0 : 0.5;
     const N = Math.ceil((dur + tailLen) * sr);
     const buf = new Float32Array(N);
-    const F = o.formant, F2 = F * rand(2.1, 2.8), wet = o.wet;
-    let ph = 0, wander = 1, wanderTarget = 1, last = 0;
+    const style = o.style, wet = o.wet, buzzF = rand(900, 1500), rough = o.rough ?? rand(0.1, 0.4);
+    let ph = 0, wander = 1, wanderTarget = 1, last = 0, count = 0;
 
     const flap = (t, a, T) => {
       const i0 = Math.round(t * sr);
-      const tau = clamp(T * 0.3, 0.0012, 0.007);
-      const L = Math.round(Math.min(T * 1.6, tau * 6) * sr);
-      const thumpLen = T * rand(0.25, 0.4), phi = rand(0, 1);
+      let L, shape;
+      if (style === 'slap') {                 // slow, wet slaps: pbbbbt
+        const fr = rand(110, 190);
+        L = Math.round(Math.min(T, 0.03) * sr);
+        shape = tt => -0.9 * Math.exp(-tt / 0.0004) + 0.8 * Math.exp(-tt / 0.004) * Math.sin(TAU * fr * tt) +
+          wet * (Math.random() * 2 - 1) * Math.exp(-tt / 0.006);
+      } else {                                // lip-buzz flap
+        const open = T * rand(0.35, 0.5);
+        L = Math.round(T * 1.2 * sr);
+        shape = tt => (tt < open ? Math.pow(Math.sin(Math.PI * tt / open), 0.6) : -0.9 * Math.exp(-(tt - open) / 0.0005)) +
+          0.25 * Math.exp(-tt / 0.0008) * Math.sin(TAU * buzzF * tt) +
+          wet * (Math.random() * 2 - 1) * Math.exp(-tt / (T * 0.3));
+      }
       for (let k = 0; k < L; k++) {
-        const tt = k / sr;
-        let v = Math.exp(-tt / tau) * (Math.sin(TAU * (F * tt + phi)) + 0.45 * Math.sin(TAU * F2 * tt));
-        if (tt < thumpLen) v += 0.55 * Math.sin(Math.PI * tt / thumpLen);
-        v += wet * (Math.random() * 2 - 1) * Math.exp(-tt / (T * 0.45));
         let idx = i0 + k;
         if (idx >= N) { if (!loop) break; idx -= N; }
-        buf[idx] += a * v;
+        buf[idx] += a * shape(k / sr);
       }
     };
 
@@ -295,7 +311,12 @@ const Sound = {
       const jit = o.jitter * (1 + (o.jitterGrow || 0) * p);
       const T = (1 / f) * (1 + jit * (Math.random() * 2 - 1));
       let env = loop ? 1 : Math.min(1, t / 0.02) * (p < 0.6 ? 1 - p * 0.25 : 0.85 * (1 - (p - 0.6) / 0.4) + 0.12);
-      env *= 1 + o.shimmer * (Math.random() * 2 - 1);
+      env *= (1 + o.shimmer * (Math.random() * 2 - 1)) * (count++ % 2 ? 1 - rough : 1);   // uneven pairs = growl
+      if (style === 'flutter') {              // the buzz comes in rapid bursts: brrrrp
+        const g = Math.sin(TAU * o.flutterRate * t);
+        if (g < -0.2) { t += T; continue; }
+        env *= Math.pow((g + 0.2) / 1.2, 0.5);
+      }
       if (Math.random() < o.sputter) { t += T * rand(1.5, 3.5); continue; }   // a little stall
       flap(t, env, T);
       last = t;
@@ -328,22 +349,21 @@ const Sound = {
 
   fart(o = {}) {
     if (!this.on()) return;
-    const c = this.ctx, power = o.power ?? 1;
+    const c = this.ctx, power = o.power ?? 1, style = o.style || CONFIG.fartStyle, st = FART_STYLES[style];
     const t = c.currentTime + (o.delay || 0);
-    const squeaky = o.f0 === undefined && Math.random() < 0.12, fz = o.fizzy ? 1.4 : 1;
+    const squeaky = !o.noSqueak && Math.random() < 0.12, fz = o.fizzy ? 1.4 : 1;
     const dur = o.dur ?? rand(0.12, 0.3) * (0.7 + 0.6 * Math.min(power, 1.5));
-    const f0 = (o.f0 ?? (squeaky ? rand(260, 420) : rand(110, 190))) * fz;
+    const f0 = (squeaky ? rand(260, 420) : rand(...st.f0) * (o.f0Mul || 1)) * fz;
     const vol = (o.vol ?? 1) * (0.4 + 0.25 * Math.min(power, 1.5));
     const buffer = this.synthFart({
-      dur, f0,
+      dur, f0, style: squeaky ? 'rasp' : style, flutterRate: rand(18, 30),
       endRatio: o.endRatio ?? (Math.random() < 0.7 ? rand(0.55, 0.85) : rand(1.1, 1.4)),
       jitter: o.jitter ?? (squeaky ? rand(0.03, 0.07) : rand(0.06, 0.14)),
       jitterGrow: o.jitterGrow,
       shimmer: rand(0.15, 0.35),
-      formant: o.formant ?? (squeaky ? f0 * rand(2, 2.8) : rand(300, 520) * fz),
-      wet: o.wet ?? (squeaky ? rand(0.1, 0.2) : rand(0.12, 0.35)),
+      wet: squeaky ? rand(0.1, 0.2) : rand(...st.wet),
       sputter: o.sputter ?? (squeaky ? 0.01 : rand(0, 0.07)),
-      cutoff: squeaky ? 2800 : rand(1600, 2400),
+      cutoff: squeaky ? 3200 : rand(...st.cutoff),
       pops: o.pops,
     });
     const src = c.createBufferSource(); src.buffer = buffer;
@@ -359,10 +379,11 @@ const Sound = {
   },
 
   makeHoldBufs() {
-    if (this.holdBufs) return;
+    if (this.holdBufs && this.holdStyle === CONFIG.fartStyle) return;
+    const style = this.holdStyle = CONFIG.fartStyle, st = FART_STYLES[style];
     this.holdBufs = [0, 1, 2].map(() => this.synthFart({
-      dur: 2.5, loop: true, f0: rand(115, 150), endRatio: 1, jitter: rand(0.07, 0.12), shimmer: 0.3,
-      formant: rand(320, 460), wet: rand(0.15, 0.3), sputter: 0.03, cutoff: 2000,
+      dur: 2.5, loop: true, style, f0: rand(...st.hold), flutterRate: rand(18, 26), endRatio: 1,
+      jitter: rand(0.07, 0.12), shimmer: 0.3, wet: rand(...st.wet), sputter: 0.03, cutoff: rand(...st.cutoff),
     }));
   },
 
@@ -461,7 +482,7 @@ const Sound = {
   buy()     { this.cash(); [523, 659, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.14, 'triangle', 0.1, 0.25 + i * 0.07)); },
   nope()    { this.tone(220, 0.18, 'square', 0.06, 0, 150); },
   bounce()  { this.tone(260, 0.12, 'sine', 0.2, 0, 120); },
-  deathFart() { this.fart({ dur: 1.2, f0: 210, endRatio: 0.4, jitter: 0.07, jitterGrow: 2, formant: 420, wet: 0.3, sputter: 0.05, pops: 4, vol: 1, power: 1.2, delay: 0.12 }); },
+  deathFart() { this.fart({ dur: 1.2, f0Mul: 1.3, endRatio: 0.4, jitter: 0.07, jitterGrow: 2, sputter: 0.05, pops: 4, vol: 1, power: 1.2, delay: 0.12, noSqueak: true }); },
 };
 
 /* ---------------------------------------------------------------------
