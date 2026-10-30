@@ -254,7 +254,7 @@ const Sound = {
       for (let k = 0; k < L; k++) {
         const tt = k / sr;
         let v = Math.exp(-tt / tau) * (Math.sin(TAU * (F * tt + phi)) + 0.45 * Math.sin(TAU * F2 * tt));
-        if (tt < thumpLen) v += 1.1 * Math.sin(Math.PI * tt / thumpLen);
+        if (tt < thumpLen) v += 0.55 * Math.sin(Math.PI * tt / thumpLen);
         v += wet * (Math.random() * 2 - 1) * Math.exp(-tt / (T * 0.45));
         let idx = i0 + k;
         if (idx >= N) { if (!loop) break; idx -= N; }
@@ -280,7 +280,7 @@ const Sound = {
     }
     // trailing pops as it runs out of steam
     if (!loop) {
-      let pt = last, pops = o.pops ?? randInt(0, 3), a = 0.45;
+      let pt = last, pops = o.pops ?? randInt(0, 2), a = 0.4;
       for (let k = 0; k < pops; k++) {
         pt += rand(0.035, 0.09) * (1 + k * 0.4);
         if (pt > dur + tailLen - 0.03) break;
@@ -308,19 +308,19 @@ const Sound = {
     const c = this.ctx, power = o.power ?? 1;
     const t = c.currentTime + (o.delay || 0);
     const squeaky = o.f0 === undefined && Math.random() < 0.12;
-    const dur = o.dur ?? rand(0.14, 0.4) * (0.7 + 0.6 * Math.min(power, 1.5));
-    const f0 = o.f0 ?? (squeaky ? rand(230, 380) : rand(65, 135));
-    const vol = (o.vol ?? 1) * (0.5 + 0.3 * Math.min(power, 1.5));
+    const dur = o.dur ?? rand(0.12, 0.3) * (0.7 + 0.6 * Math.min(power, 1.5));
+    const f0 = o.f0 ?? (squeaky ? rand(260, 420) : rand(110, 190));
+    const vol = (o.vol ?? 1) * (0.4 + 0.25 * Math.min(power, 1.5));
     const buffer = this.synthFart({
       dur, f0,
       endRatio: o.endRatio ?? (Math.random() < 0.7 ? rand(0.55, 0.85) : rand(1.1, 1.4)),
-      jitter: o.jitter ?? (squeaky ? rand(0.03, 0.07) : rand(0.08, 0.2)),
+      jitter: o.jitter ?? (squeaky ? rand(0.03, 0.07) : rand(0.06, 0.14)),
       jitterGrow: o.jitterGrow,
       shimmer: rand(0.15, 0.35),
-      formant: o.formant ?? (squeaky ? f0 * rand(2, 2.8) : rand(170, 330)),
-      wet: o.wet ?? (squeaky ? rand(0.1, 0.25) : rand(0.25, 0.7)),
+      formant: o.formant ?? (squeaky ? f0 * rand(2, 2.8) : rand(300, 520)),
+      wet: o.wet ?? (squeaky ? rand(0.1, 0.2) : rand(0.12, 0.35)),
       sputter: o.sputter ?? (squeaky ? 0.01 : rand(0, 0.07)),
-      cutoff: squeaky ? 2600 : rand(900, 1600),
+      cutoff: squeaky ? 2800 : rand(1600, 2400),
       pops: o.pops,
     });
     const src = c.createBufferSource(); src.buffer = buffer;
@@ -337,8 +337,8 @@ const Sound = {
   makeHoldBufs() {
     if (this.holdBufs) return;
     this.holdBufs = [0, 1, 2].map(() => this.synthFart({
-      dur: 2.5, loop: true, f0: rand(75, 110), endRatio: 1, jitter: rand(0.1, 0.18), shimmer: 0.3,
-      formant: rand(180, 300), wet: rand(0.35, 0.6), sputter: 0.03, cutoff: 1300,
+      dur: 2.5, loop: true, f0: rand(115, 150), endRatio: 1, jitter: rand(0.07, 0.12), shimmer: 0.3,
+      formant: rand(320, 460), wet: rand(0.15, 0.3), sputter: 0.03, cutoff: 2000,
     }));
   },
 
@@ -351,7 +351,7 @@ const Sound = {
     const src = c.createBufferSource(); src.buffer = pick(this.holdBufs); src.loop = true;
     const env = c.createGain();
     env.gain.setValueAtTime(0.0001, t);
-    env.gain.exponentialRampToValueAtTime(0.42, t + 0.04);
+    env.gain.exponentialRampToValueAtTime(0.32, t + 0.04);
     src.connect(env); env.connect(this.master);
     src.start(t, rand(0, 2));
     this.hold = { src, env, next: 0 };
@@ -412,7 +412,7 @@ const Sound = {
     this.noise(0.18, 1200, 0.5, 0, 'lowpass');
   },
   bounce()  { this.tone(260, 0.12, 'sine', 0.2, 0, 120); },
-  deathFart() { this.fart({ dur: 1.4, f0: 140, endRatio: 0.35, jitter: 0.1, jitterGrow: 2, wet: 0.6, sputter: 0.06, pops: 5, vol: 1.1, power: 1.2, delay: 0.12 }); },
+  deathFart() { this.fart({ dur: 1.2, f0: 210, endRatio: 0.4, jitter: 0.07, jitterGrow: 2, formant: 420, wet: 0.3, sputter: 0.05, pops: 4, vol: 1, power: 1.2, delay: 0.12 }); },
 };
 
 /* ---------------------------------------------------------------------
