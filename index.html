@@ -530,6 +530,9 @@ const MESSAGES = {
 
 const PUFF_WORDS = ['PFFT!', 'TOOT!', 'PARP!', 'FWEEP!', 'POOT!', 'BRRRP!', 'PFFFFT!'];
 
+// Little things she says now and then, in a speech bubble. Add more here!
+const SAYINGS = ['dee da dee', 'snnnckm', "n'yeah"];
+
 /* ---------------------------------------------------------------------
    6. GAME STATE
    --------------------------------------------------------------------- */
@@ -555,6 +558,7 @@ const game = {
   shake: 0, flash: 0, scorePulse: 0,
   deathT: 0, overT: 0, idleT: 0,
   deathCause: '', message: '', diedFizzy: false,
+  say: null, sayT: 3,      // current speech bubble { text, t }, and time until the next one
 };
 
 const player = {
@@ -575,6 +579,7 @@ function startGame() {
   game.score = 0; game.rank = 0; game.newBest = false;
   game.obstacles = []; game.pickups = [];
   game.runCoins = 0; game.diedFizzy = false;
+  game.say = null; game.sayT = rand(4, 8);
   game.spawned = 0;
   game.lastGapCenter = (C.ceilingY + H - C.floorHeight) / 2;
   game.nextObstacleX = game.cam + W + 120;
@@ -1055,6 +1060,7 @@ function step(dt) {
   else if (game.state === 'play' && (p.thrusting || p.vy < -120)) p.expression = 'determined';
   else p.expression = 'happy';
 
+  updateSpeech(dt);
   updateFireworks(dt);
   updateParticles(dt);
 }
@@ -1382,6 +1388,56 @@ function launchFireworks(perWindow) {
       });
     }
   }
+}
+
+// Every so often she pipes up with one of her sayings.
+function updateSpeech(dt) {
+  const st = game.state;
+  if (st !== 'play' && st !== 'title' && st !== 'shop') { game.say = null; return; }
+  if (game.say) {
+    game.say.t += dt;
+    if (game.say.t > 1.9) game.say = null;
+    return;
+  }
+  game.sayT -= dt;
+  if (game.sayT <= 0) {
+    game.sayT = rand(9, 17);
+    const last = game.lastSaying;
+    const options = SAYINGS.length > 1 ? SAYINGS.filter(t => t !== last) : SAYINGS;
+    game.say = { text: pick(options), t: 0 };
+    game.lastSaying = game.say.text;
+  }
+}
+
+function drawSpeech(py) {
+  const sy = game.say;
+  if (!sy || game.state === 'shop') return;
+  const size = 15;
+  ctx.font = `bold ${size}px ${FONT}`;
+  const bw = ctx.measureText(sy.text).width + 22, bh = 30;
+  const hx = player.x + 8, hy = py - 24;                  // top of her head
+  const side = py - 50 - bh < CONFIG.ceilingY + 6;        // no room above: put it beside her
+  const bx = side ? player.x + 30 : clamp(player.x + 4, 6, W - bw - 6);
+  const by = side ? Math.max(CONFIG.ceilingY + 6, py - 26 - bh / 2) : py - 50 - bh;
+  const pop = sy.t < 0.18 ? easeOutBack(sy.t / 0.18) : 1;
+  ctx.save();
+  ctx.globalAlpha = sy.t > 1.6 ? Math.max(0, (1.9 - sy.t) / 0.3) : 1;
+  ctx.translate(hx, hy); ctx.scale(pop, pop); ctx.translate(-hx, -hy);
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#2b1740'; ctx.lineWidth = 2.5;
+  roundRect(ctx, bx, by, bw, bh, 14); ctx.fill(); ctx.stroke();
+  if (side) {                                             // tail pointing left at her face
+    const ty = by + bh / 2;
+    ctx.beginPath(); ctx.moveTo(bx + 1, ty - 6); ctx.lineTo(player.x + 18, py - 14); ctx.lineTo(bx + 1, ty + 5);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillRect(bx, ty - 5, 4, 9);                       // hide the outline where the tail joins
+  } else {                                                // tail pointing down at her head
+    const tx = clamp(hx + 4, bx + 14, bx + bw - 14);
+    ctx.beginPath(); ctx.moveTo(tx - 7, by + bh - 1); ctx.lineTo(hx, Math.max(hy, by + bh + 8)); ctx.lineTo(tx + 6, by + bh - 1);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillRect(tx - 6, by + bh - 4, 11, 4);
+  }
+  drawText(sy.text, bx + bw / 2, by + bh / 2 + 1, size, '#6a3f8a', 'center', false);
+  ctx.restore();
 }
 
 function updateFireworks(dt) {
@@ -2540,6 +2596,7 @@ function render(alpha) {
   if (blink) ctx.globalAlpha = 0.4;
   drawPlayer(pyR);
   ctx.globalAlpha = 1;
+  drawSpeech(pyR);
   drawParticles(camR, 'front');
   ctx.restore();
 

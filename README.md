@@ -24,7 +24,7 @@ Your high score is saved in your browser.
 - Look out for the **fizz bottle**: a few seconds of double points, with a slightly tipsy wobble.
 - Grab a **chocolate bar** for a shield: the next crash just snaps the chocolate instead of ending your run.
 
-Keep an eye on the windows for the odd plane flying past, and fireworks (especially when you rank up).
+Keep an eye on the windows for the odd plane flying past, and fireworks (especially when you rank up). Every so often she pipes up with one of her sayings in a speech bubble; add more to `SAYINGS` in the script.
 
 ## Tweaking
 
