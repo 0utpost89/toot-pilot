@@ -448,7 +448,7 @@ const Sound = {
 
   blip()    { this.tone(700, 0.08, 'triangle', 0.14); this.tone(1050, 0.1, 'triangle', 0.12, 0.06); },
   click()   { this.tone(600, 0.06, 'square', 0.08); },
-  rankUp()  { [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.16, 'triangle', 0.13, i * 0.08)); },
+  rankUp()  { Music.fanfare(); },
   crash() {
     this.tone(440, 0.32, 'sine', 0.45, 0, 70);          // cartoon "bonk"
     this.tone(880, 0.12, 'square', 0.08, 0, 300);
@@ -483,6 +483,217 @@ const Sound = {
   nope()    { this.tone(220, 0.18, 'square', 0.06, 0, 150); },
   bounce()  { this.tone(260, 0.12, 'sine', 0.2, 0, 120); },
   deathFart() { this.fart({ dur: 1.2, f0Mul: 1.3, endRatio: 0.4, jitter: 0.07, jitterGrow: 2, sputter: 0.05, pops: 4, vol: 1, power: 1.2, delay: 0.12, noSqueak: true }); },
+};
+
+/* ---------------------------------------------------------------------
+   4b. MUSIC — an original, bouncy mariachi-brass tune, synthesised live
+   --------------------------------------------------------------------- */
+// The tune is written in eighth-note steps (8 per bar). Each bar is a chord
+// name plus melody notes as [step, length in steps, MIDI note]; '' = honk.
+const CHORDS = {
+  F: [53, 57, 60], F7: [53, 57, 63], Bb: [58, 62, 65], Bbm: [58, 61, 65], C7: [48, 52, 58],
+  Dm: [50, 53, 57], Gm: [55, 58, 62],
+};
+const SONG = (() => {
+  const A = [
+    ['F',  [[0, 1, 72], [1, 1, 69], [2, 1, 72], [3, 2, 77], [5, 1, 76], [6, 1, 74], [7, 1, 72]]],
+    ['F',  [[0, 2, 69], [3, 1, 69], [4, 1, 70], [5, 2, 72]]],
+    ['C7', [[0, 1, 70], [1, 1, 67], [2, 1, 70], [3, 2, 76], [5, 1, 74], [6, 1, 72], [7, 1, 70]]],
+    ['C7', [[0, 3, 67], [4, 1, 64], [5, 1, 67], [6, 1, 70], [7, 1, 72]]],
+  ];
+  const A1 = A.concat([
+    ['C7', [[0, 1, 74], [1, 1, 72], [2, 1, 70], [3, 1, 67], [4, 2, 76], [6, 1, 74], [7, 1, 72]]],
+    ['C7', [[0, 2, 70], [2, 2, 67], [4, 4, 72]]],
+    ['F',  [[0, 1, 69], [1, 1, 72], [2, 1, 77], [3, 2, 81], [5, 1, 79], [6, 1, 77], [7, 1, 76]]],
+    ['F',  [[0, 3, 77], [5, 1, ''], [6, 1, '']]],                     // beep-beep!
+  ]);
+  const A2 = A.concat([
+    ['Bb',  [[0, 1, 74], [1, 1, 77], [2, 2, 82], [4, 1, 81], [5, 1, 79], [6, 1, 77], [7, 1, 74]]],
+    ['Bbm', [[0, 2, 73], [2, 2, 77], [4, 1, 73], [5, 1, 72], [6, 2, 70]]],
+    ['C7',  [[0, 1, 72], [1, 1, 76], [2, 1, 79], [3, 2, 82], [5, 1, 81], [6, 1, 79], [7, 1, 76]]],
+    ['F',   [[0, 4, 77]]],
+  ]);
+  const B = [
+    ['Dm', [[0, 2, 81], [2, 2, 77], [4, 2, 74], [6, 1, 76], [7, 1, 77]]],
+    ['Dm', [[0, 3, 76], [3, 1, 74], [4, 4, 69]]],
+    ['Gm', [[0, 2, 82], [2, 2, 79], [4, 2, 74], [6, 1, 76], [7, 1, 77]]],
+    ['Gm', [[0, 3, 79], [3, 1, 77], [4, 4, 74]]],
+    ['C7', [[0, 1, 76], [1, 1, 79], [2, 2, 84], [4, 1, 82], [5, 1, 81], [6, 1, 79], [7, 1, 76]]],
+    ['C7', [[0, 1, 77], [1, 1, 76], [2, 1, 74], [3, 1, 72], [4, 2, 70], [6, 2, 67]]],
+    ['F',  [[0, 1, 69], [1, 1, 72], [2, 2, 77], [4, 4, 81]]],
+    ['C7', [[0, 2, 79], [3, 1, ''], [4, 1, '']]],                     // beep-beep!
+  ];
+  return [].concat(A1, A2, B, A2);
+})();
+
+const Music = {
+  on: store.get('tootPilot.music', '1') === '1',
+  playing: false, gain: null, timer: null, step: 0, nextTime: 0,
+  volume: 0.2,               // keeps the music under the toots
+
+  setup() {
+    const c = Sound.ctx;
+    if (!c || this.gain) return !!c;
+    this.gain = c.createGain();
+    this.gain.gain.value = this.on ? this.volume : 0;
+    this.gain.connect(Sound.master);
+    return true;
+  },
+  start() {                                   // (re)start the tune from the top
+    if (!this.setup()) return;
+    this.stop();
+    this.playing = true;
+    this.step = 0;
+    this.nextTime = Sound.ctx.currentTime + 0.1;
+    this.timer = setInterval(() => this.tick(), 25);
+  },
+  stop() {
+    this.playing = false;
+    clearInterval(this.timer);
+  },
+  toggle() {
+    this.on = !this.on;
+    store.set('tootPilot.music', this.on ? '1' : '0');
+    if (this.gain) this.gain.gain.setTargetAtTime(this.on ? this.volume : 0, Sound.ctx.currentTime, 0.05);
+  },
+  bpm() { return 152 + (game.state === 'play' ? Math.min(game.score, 40) * 0.4 : 0); },   // a little faster as she scores
+  tick() {
+    if (!this.playing) return;
+    const c = Sound.ctx;
+    if (document.hidden) { this.nextTime = c.currentTime + 0.05; return; }
+    while (this.nextTime < c.currentTime + 0.15) {
+      this.playStep(this.step, this.nextTime, 60 / this.bpm() / 2);
+      this.nextTime += 60 / this.bpm() / 2;
+      this.step = (this.step + 1) % (SONG.length * 8);
+    }
+  },
+
+  // Everything that happens on one eighth-note step.
+  playStep(step, t, e) {
+    const [chord, notes] = SONG[Math.floor(step / 8)], k = step % 8, ch = CHORDS[chord];
+    // drums: kick on the beat, snare on the backbeat, hats on every eighth
+    if (k % 4 === 0) this.kick(t);
+    if (k % 4 === 2) this.snare(t);
+    this.hat(t, k === 7);
+    // oompah tuba on beats 1 and 3, plucky chord stabs on the offbeats
+    if (k === 0) this.tuba(t, ch[0] - 12, e * 1.6);
+    if (k === 4) this.tuba(t, ch[2] - 24 + (ch[2] - 24 < ch[0] - 12 ? 12 : 0), e * 1.6);
+    if (k === 2 || k === 6) this.stab(t, ch.map(n => n + 12), e * 0.8);
+    // the trumpets: melody plus a harmony a chord tone or so below
+    for (const [st, len, n] of notes) {
+      if (st !== k) continue;
+      if (n === '') { this.honk(t); continue; }
+      this.trumpet(t, n, len * e * 0.92, 0.2);
+      this.trumpet(t, this.harmony(n, ch), len * e * 0.92, 0.13);
+    }
+  },
+  harmony(n, ch) {
+    let best = n - 4;
+    for (let o = -24; o <= 24; o += 12) for (const c of ch) {
+      const h = c + o;
+      if (h <= n - 3 && h > best - 1 && h >= n - 9) best = h;
+    }
+    return best;
+  },
+
+  // --- instruments ---
+  trumpet(t, midi, d, vol, out = this.gain, wah = false) {
+    const c = Sound.ctx, f = 440 * Math.pow(2, (midi - 69) / 12);
+    const o1 = c.createOscillator(), o2 = c.createOscillator();
+    o1.type = o2.type = 'sawtooth';
+    o1.frequency.setValueAtTime(f * 0.97, t); o1.frequency.exponentialRampToValueAtTime(f, t + 0.035);   // brassy scoop
+    o2.frequency.setValueAtTime(f * 0.974, t); o2.frequency.exponentialRampToValueAtTime(f * 1.004, t + 0.035);
+    const filt = c.createBiquadFilter(); filt.type = 'lowpass'; filt.Q.value = 2;
+    filt.frequency.setValueAtTime(f * 1.5, t);
+    filt.frequency.exponentialRampToValueAtTime(Math.min(f * 8, 5500), t + 0.04);
+    filt.frequency.exponentialRampToValueAtTime(Math.min(f * 4.5, 4000), t + 0.18);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.018);
+    g.gain.setValueAtTime(vol * 0.8, t + Math.max(0.03, d - 0.04));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.05);
+    if (d > 0.3 || wah) {                      // vibrato on held notes
+      const lfo = c.createOscillator(), ld = c.createGain();
+      lfo.frequency.value = wah ? 4.5 : 5.5;
+      ld.gain.setValueAtTime(0, t); ld.gain.linearRampToValueAtTime(f * (wah ? 0.03 : 0.012), t + 0.25);
+      lfo.connect(ld); ld.connect(o1.frequency); ld.connect(o2.frequency);
+      if (wah) {                               // and a "wah-wah" filter sweep
+        const wd = c.createGain(); wd.gain.value = f * 2.5;
+        lfo.connect(wd); wd.connect(filt.frequency);
+      }
+      lfo.start(t); lfo.stop(t + d + 0.1);
+    }
+    o1.connect(filt); o2.connect(filt); filt.connect(g); g.connect(out);
+    o1.start(t); o2.start(t); o1.stop(t + d + 0.1); o2.stop(t + d + 0.1);
+  },
+  tuba(t, midi, d) {
+    const c = Sound.ctx, f = 440 * Math.pow(2, (midi - 69) / 12);
+    const o = c.createOscillator(), o2 = c.createOscillator();
+    o.type = 'triangle'; o2.type = 'square'; o.frequency.value = f; o2.frequency.value = f;
+    const og = c.createGain(); og.gain.value = 0.25;
+    const filt = c.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 420;
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.38, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(filt); o2.connect(og); og.connect(filt); filt.connect(g); g.connect(this.gain);
+    o.start(t); o2.start(t); o.stop(t + d + 0.02); o2.stop(t + d + 0.02);
+  },
+  stab(t, midis, d) {
+    const c = Sound.ctx, filt = c.createBiquadFilter(), g = c.createGain();
+    filt.type = 'lowpass'; filt.frequency.value = 1800;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.06, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    filt.connect(g); g.connect(this.gain);
+    for (const m of midis) {
+      const o = c.createOscillator(); o.type = 'square'; o.frequency.value = 440 * Math.pow(2, (m - 69) / 12);
+      o.connect(filt); o.start(t); o.stop(t + d + 0.02);
+    }
+  },
+  drumNoise(t, dur, type, freq, vol, q = 1) {
+    const c = Sound.ctx, n = c.createBufferSource(); n.buffer = Sound.noiseBuf;
+    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    n.connect(f); f.connect(g); g.connect(this.gain);
+    n.start(t, Math.random() * 0.5); n.stop(t + dur + 0.02);
+  },
+  kick(t) {
+    const c = Sound.ctx, o = c.createOscillator(), g = c.createGain();
+    o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.1);
+    g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    o.connect(g); g.connect(this.gain); o.start(t); o.stop(t + 0.18);
+  },
+  snare(t) { this.drumNoise(t, 0.12, 'bandpass', 1900, 0.32, 0.8); },
+  hat(t, open) { this.drumNoise(t, open ? 0.12 : 0.03, 'highpass', 7500, open ? 0.08 : 0.06); },
+  honk(t) {                                    // a taxi's "beep-beep"
+    const c = Sound.ctx;
+    for (const dt of [0, 0.13]) {
+      const filt = c.createBiquadFilter(), g = c.createGain();
+      filt.type = 'lowpass'; filt.frequency.value = 2200;
+      g.gain.setValueAtTime(0.0001, t + dt); g.gain.exponentialRampToValueAtTime(0.09, t + dt + 0.01);
+      g.gain.setValueAtTime(0.09, t + dt + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.1);
+      filt.connect(g); g.connect(this.gain);
+      for (const f of [392, 415]) {
+        const o = c.createOscillator(); o.type = 'square'; o.frequency.value = f;
+        o.connect(filt); o.start(t + dt); o.stop(t + dt + 0.12);
+      }
+    }
+  },
+
+  // --- jingles (sound effects, so they play even with the music switched off) ---
+  fanfare() {
+    if (!Sound.on()) return;
+    const t = Sound.ctx.currentTime + 0.02;
+    [[0, 77, 0.1], [0.11, 81, 0.1], [0.22, 84, 0.1], [0.33, 89, 0.45]].forEach(([dt, n, d]) => {
+      this.trumpet(t + dt, n, d, 0.16, Sound.master);
+      this.trumpet(t + dt, n - 4, d, 0.1, Sound.master);
+    });
+  },
+  sadTrombone() {
+    if (!Sound.on()) return;
+    const t = Sound.ctx.currentTime + 0.05;
+    [[0, 58, 0.38], [0.45, 57, 0.38], [0.9, 56, 0.38], [1.35, 55, 1.2]].forEach(([dt, n, d], i) =>
+      this.trumpet(t + dt, n, d, 0.2, Sound.master, i === 3));
+  },
 };
 
 /* ---------------------------------------------------------------------
@@ -576,6 +787,7 @@ const player = {
 function startGame() {
   const C = CONFIG;
   game.state = 'play';
+  Music.start();
   game.score = 0; game.rank = 0; game.newBest = false;
   game.obstacles = []; game.pickups = [];
   game.runCoins = 0; game.diedFizzy = false;
@@ -870,7 +1082,10 @@ function pointerToView(e) {
   return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
 }
 const MUTE_BTN = { r: 20, get x() { return W - 30; }, y: 22 };
+const MUSIC_BTN = { r: 20, get x() { return W - 72; }, y: 22 };
 function inMuteButton(x, y) { return Math.hypot(x - MUTE_BTN.x, y - MUTE_BTN.y) < MUTE_BTN.r + 8; }
+function inMusicButton(x, y) { return Math.hypot(x - MUSIC_BTN.x, y - MUSIC_BTN.y) < MUSIC_BTN.r + 2; }
+function toggleMusic() { Music.toggle(); Sound.click(); }
 function toggleMute() { Sound.setMuted(!Sound.muted); if (!Sound.muted) Sound.click(); }
 
 function pressStart() { input.held = true; handlePress(); }
@@ -898,6 +1113,7 @@ window.addEventListener('pointerdown', e => {
   Sound.unlock();
   const v = pointerToView(e);
   if (inMuteButton(v.x, v.y)) { toggleMute(); return; }
+  if (inMusicButton(v.x, v.y)) { toggleMusic(); return; }
   if (hitButton(v) || game.state === 'shop') return;
   input.pointers.add(e.pointerId);
   pressStart();
@@ -908,6 +1124,7 @@ window.addEventListener('pointercancel', pointerUp);
 
 window.addEventListener('keydown', e => {
   if (e.code === 'KeyM') { Sound.unlock(); toggleMute(); return; }
+  if (e.code === 'KeyN') { Sound.unlock(); toggleMusic(); return; }
   if (game.state === 'shop') {
     if (e.code === 'Escape' || ACTION_KEYS.has(e.code)) { e.preventDefault(); if (!e.repeat) closeShop(); }
     return;
@@ -978,6 +1195,7 @@ function die(cause) {
   game.deathT = 0;
   game.deathCause = cause;
   game.deathSpeed = game.speed;
+  Music.stop();
   game.diedFizzy = p.fizzT > 0;
   p.fizzT = 0; p.shield = false; p.invulnT = 0;
   if (p.thrusting) { p.thrusting = false; Sound.stopHold(); }
@@ -994,6 +1212,7 @@ function die(cause) {
 function gameOver() {
   game.state = 'over';
   game.overT = 0;
+  Music.sadTrombone();
   game.newBest = game.score > game.best;
   if (game.newBest) { game.best = game.score; store.set('tootPilot.best', game.best); }
   const extra = game.diedFizzy ? MESSAGES.fizz : MESSAGES[game.deathCause] || [];
@@ -2316,6 +2535,21 @@ function drawMuteButton() {
   ctx.lineCap = 'butt';
 }
 
+function drawMusicButton() {
+  const { x, y, r } = MUSIC_BTN;
+  ctx.fillStyle = 'rgba(43,23,64,0.75)'; ctx.beginPath(); ctx.arc(x, y, r - 4, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff';             // a pair of quavers
+  ctx.beginPath(); ctx.ellipse(x - 4.5, y + 5, 3.2, 2.4, -0.4, 0, TAU); ctx.ellipse(x + 4.5, y + 3, 3.2, 2.4, -0.4, 0, TAU); ctx.fill();
+  ctx.lineWidth = 1.8;
+  ctx.beginPath(); ctx.moveTo(x - 1.6, y + 4.5); ctx.lineTo(x - 1.6, y - 6); ctx.lineTo(x + 7.4, y - 8); ctx.lineTo(x + 7.4, y + 2.5); ctx.stroke();
+  if (!Music.on) {
+    ctx.strokeStyle = '#ff6b6b'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x - 9, y - 9); ctx.lineTo(x + 9, y + 9); ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+}
+
 // Bottom-left: how much fizz is left, and whether a chocolate shield is ready.
 function drawPowerUps() {
   const p = player, C = CONFIG, x = 14, y = H - 30, w = Math.min(130, W * 0.35);
@@ -2408,6 +2642,7 @@ function closeShop() { goToMenu(); }
 function goToMenu() {
   if (game.state === 'over' && game.overT < 0.3) return;
   game.state = 'title';
+  if (!Music.playing) Music.start();
   game.obstacles = []; game.pickups = []; game.fireworks = [];
   game.shopSel = null; game.say = null; game.sayT = rand(3, 6);
   Sound.click();
@@ -2463,7 +2698,7 @@ function drawShop() {
   ctx.restore();
   ctx.beginPath(); ctx.moveTo(px, top + 56); ctx.lineTo(px + pw, top + 56); ctx.stroke();
   drawText('SHOP', px + 18, top + 29, 30, '#fff', 'left');
-  drawCoinCounter(Math.min(px + pw - 18, MUTE_BTN.x - MUTE_BTN.r - 12), top + 29, 20, 'right');   // keep clear of the mute button
+  drawCoinCounter(Math.min(px + pw - 18, MUSIC_BTN.x - MUSIC_BTN.r - 10), top + 29, 20, 'right');   // keep clear of the sound buttons
 
   // tabs
   const tabW = (pw - 36) / 2, tabY = top + 68;
@@ -2626,6 +2861,7 @@ function render(alpha) {
   if (game.state === 'over') drawGameOver();
   if (game.state === 'shop') drawShop();
   drawMuteButton();
+  drawMusicButton();
 }
 
 /* ---------------------------------------------------------------------
