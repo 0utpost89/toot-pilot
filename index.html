@@ -88,6 +88,19 @@ const CONFIG = {
   beanPoints: 2,
   beanRefill: 45,
 
+  // Toot Coins (saved between games and spent in the shop)
+  coinRowChance: 0.4,      // chance of a little arc of coins through a gap
+  noteChance: 0.12,        // chance of a banknote between obstacles
+  noteValue: 5,
+  stackChance: 0.03,       // chance of a risky bundle of notes near a gap's edge
+  stackValue: 25,
+
+  // Fizz boost: a bottle of something sparkling
+  fizzChance: 0.08,        // chance of a bottle between obstacles...
+  fizzStartAfter: 4,       // ...once she's passed this many
+  fizzDuration: 6,         // seconds of full tank and double points
+  fizzWobble: 420,         // how tipsy the flight gets
+
   // Player
   playerX: 0.28,           // fraction of view width (capped at 260px)
   playerRadius: 15,        // collision radius
@@ -146,6 +159,23 @@ function circleRect(cx, cy, r, rx, ry, rw, rh) {
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) { /* ignore */ } },
+};
+
+function parseList(str) {
+  try { const a = JSON.parse(str); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+
+// Toot Coins and shop purchases, kept in localStorage alongside the high score.
+const wallet = {
+  coins: parseInt(store.get('tootPilot.coins', '0'), 10) || 0,
+  owned: new Set(parseList(store.get('tootPilot.owned', '[]'))),
+  pj: store.get('tootPilot.pj', 'pj-pink'),
+  add(n) { this.coins += n; this.save(); },
+  save() {
+    store.set('tootPilot.coins', this.coins);
+    store.set('tootPilot.owned', JSON.stringify([...this.owned]));
+    store.set('tootPilot.pj', this.pj);
+  },
 };
 
 /* ---------------------------------------------------------------------
@@ -307,9 +337,9 @@ const Sound = {
     if (!this.on()) return;
     const c = this.ctx, power = o.power ?? 1;
     const t = c.currentTime + (o.delay || 0);
-    const squeaky = o.f0 === undefined && Math.random() < 0.12;
+    const squeaky = o.f0 === undefined && Math.random() < 0.12, fz = o.fizzy ? 1.4 : 1;
     const dur = o.dur ?? rand(0.12, 0.3) * (0.7 + 0.6 * Math.min(power, 1.5));
-    const f0 = o.f0 ?? (squeaky ? rand(260, 420) : rand(110, 190));
+    const f0 = (o.f0 ?? (squeaky ? rand(260, 420) : rand(110, 190))) * fz;
     const vol = (o.vol ?? 1) * (0.4 + 0.25 * Math.min(power, 1.5));
     const buffer = this.synthFart({
       dur, f0,
@@ -317,7 +347,7 @@ const Sound = {
       jitter: o.jitter ?? (squeaky ? rand(0.03, 0.07) : rand(0.06, 0.14)),
       jitterGrow: o.jitterGrow,
       shimmer: rand(0.15, 0.35),
-      formant: o.formant ?? (squeaky ? f0 * rand(2, 2.8) : rand(300, 520)),
+      formant: o.formant ?? (squeaky ? f0 * rand(2, 2.8) : rand(300, 520) * fz),
       wet: o.wet ?? (squeaky ? rand(0.1, 0.2) : rand(0.12, 0.35)),
       sputter: o.sputter ?? (squeaky ? 0.01 : rand(0, 0.07)),
       cutoff: squeaky ? 2800 : rand(1600, 2400),
@@ -327,6 +357,7 @@ const Sound = {
     const g = c.createGain(); g.gain.value = vol;
     src.connect(g); g.connect(this.master);
     src.start(t);
+    if (o.fizzy) this.bubbles(dur + 0.2, o.delay || 0);
 
     // Occasionally a little encore.
     if (!o.delay && !o.noDouble && Math.random() < 0.15) {
@@ -356,13 +387,13 @@ const Sound = {
     src.start(t, rand(0, 2));
     this.hold = { src, env, next: 0 };
   },
-  updateHold(intensity) {
+  updateHold(intensity, fizzy) {
     const h = this.hold;
     if (!h) return;
     const t = this.ctx.currentTime;
     if (t > h.next) {
       h.next = t + rand(0.08, 0.2);
-      h.src.playbackRate.setTargetAtTime(rand(0.85, 1.2) * (1 + intensity * 0.2), t, 0.05);
+      h.src.playbackRate.setTargetAtTime(rand(0.85, 1.2) * (1 + intensity * 0.2) * (fizzy ? 1.3 : 1), t, 0.05);
     }
   },
   stopHold() {
@@ -411,6 +442,27 @@ const Sound = {
     this.tone(880, 0.12, 'square', 0.08, 0, 300);
     this.noise(0.18, 1200, 0.5, 0, 'lowpass');
   },
+  coin()    { this.tone(1568, 0.07, 'square', 0.05); this.tone(2093, 0.16, 'square', 0.05, 0.06); },
+  cash() {
+    this.noise(0.05, 5000, 0.12, 0, 'highpass');                     // ka-
+    [1319, 1568, 2093, 2637].forEach((f, i) => this.tone(f, 0.12, 'square', 0.05, 0.05 + i * 0.05));   // -ching!
+  },
+  bubbles(dur, delay = 0) {
+    for (let i = 0; i < 6; i++) this.tone(rand(700, 1400), 0.05, 'sine', 0.05, delay + rand(0, dur), rand(1700, 2600));
+  },
+  cork() {
+    this.noise(0.04, 1800, 0.6, 0, 'bandpass', 2);                   // pop!
+    this.tone(320, 0.09, 'sine', 0.25, 0, 900);
+    this.noise(0.7, 6000, 0.1, 0.05, 'highpass');                     // fizzzz
+    this.bubbles(0.8, 0.05);
+  },
+  fizzOut() { this.tone(900, 0.25, 'sine', 0.08, 0, 300); },
+  firework() {
+    this.noise(0.4, 160, 0.16, 0, 'lowpass');
+    for (let i = 0; i < 4; i++) this.noise(0.04, 4000, 0.04, 0.12 + i * rand(0.05, 0.1), 'highpass');
+  },
+  buy()     { this.cash(); [523, 659, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.14, 'triangle', 0.1, 0.25 + i * 0.07)); },
+  nope()    { this.tone(220, 0.18, 'square', 0.06, 0, 150); },
   bounce()  { this.tone(260, 0.12, 'sine', 0.2, 0, 120); },
   deathFart() { this.fart({ dur: 1.2, f0: 210, endRatio: 0.4, jitter: 0.07, jitterGrow: 2, formant: 420, wet: 0.3, sputter: 0.05, pops: 4, vol: 1, power: 1.2, delay: 0.12 }); },
 };
@@ -453,6 +505,7 @@ const MESSAGES = {
   fan: ['Fan-tastic crash. Truly a breeze.', 'Never fly into the spinny thing.', 'Blown away. By the fan, for once.'],
   lamp: ['Lights out!', 'She saw the light. Then she hit it.', 'Lamp: 1. Pilot: 0.'],
   bags: ['Buried by the bag collection.', 'One more bag was one too many.', 'Crash-landed in the backpack pile.', 'She can stop buying bags any time. Any time.'],
+  fizz: ['Fizz-induced turbulence.', 'One bottle of fizz too many.', 'Lightly sparkling. Heavily crashing.', 'Flying under the influence. Of bubbles.'],
   floor: ['Ran out of puff.', 'Gravity remains undefeated.', 'A soft landing. Mostly.'],
   ceiling: ['Too much gas, not enough ceiling.', 'Over-inflated. Hit the roof.', 'Ceiling inspection complete.'],
 };
@@ -474,13 +527,17 @@ const game = {
   rank: 0,
   obstacles: [],
   beans: [],
+  pickups: [],             // Toot Coins and fizz bottles
+  runCoins: 0,
   particles: [],
+  fireworks: [], fwT: 5,   // fireworks in the window skies
+  shopTab: 'pj', shopSel: null, shopNote: null,
   spawned: 0,
   nextObstacleX: 0,
   lastGapCenter: 0,
   shake: 0, flash: 0, scorePulse: 0,
   deathT: 0, overT: 0, idleT: 0,
-  deathCause: '', message: '',
+  deathCause: '', message: '', diedFizzy: false,
 };
 
 const player = {
@@ -491,6 +548,7 @@ const player = {
   holdTime: 0, thrusting: false, thrustTime: 0, sinceThrust: 99, sputterT: 0,
   smugT: 0, panic: false, blinkT: 2,
   trailAcc: 0,
+  fizzT: 0,                      // seconds of fizz boost left
   expression: 'happy',
 };
 
@@ -498,7 +556,8 @@ function startGame() {
   const C = CONFIG;
   game.state = 'play';
   game.score = 0; game.rank = 0; game.newBest = false;
-  game.obstacles = []; game.beans = [];
+  game.obstacles = []; game.beans = []; game.pickups = [];
+  game.runCoins = 0; game.diedFizzy = false;
   game.spawned = 0;
   game.lastGapCenter = (C.ceilingY + H - C.floorHeight) / 2;
   game.nextObstacleX = game.cam + W + 120;
@@ -506,7 +565,7 @@ function startGame() {
   Object.assign(player, {
     y: H * 0.42, vy: 0, angle: 0, spin: 0, stretch: 0, stretchV: 0,
     tank: C.tankMax, holdTime: 0, thrusting: false, thrustTime: 0,
-    sinceThrust: 99, smugT: 0, panic: false, trailAcc: 0,
+    sinceThrust: 99, smugT: 0, panic: false, trailAcc: 0, fizzT: 0,
   });
   player.prevY = player.y;
 }
@@ -528,20 +587,35 @@ const BAG_PALETTES = [
 const BAG_EARS = ['cat', 'bear', 'none', 'none'];
 const BAG_MOTIFS = ['flowers', 'bats', 'stars', 'hearts'];
 
+// Special bags sold in the shop. Once bought they turn up in the floor stacks.
+const BAG_DESIGNS = [
+  { id: 'bag-garden',    name: 'Midnight Garden', price: 30,  pal: ['#2a2433', '#c9b6e8'], ears: 'none', motif: 'flowers' },
+  { id: 'bag-pumpkin',   name: 'Pumpkin Night',   price: 60,  pal: ['#ff9a3c', '#2a2433'], ears: 'cat',  motif: 'bats' },
+  { id: 'bag-rose',      name: 'Rosé Fizz',       price: 80,  pal: ['#ffc2d6', '#ffffff'], ears: 'none', motif: 'bubbles' },
+  { id: 'bag-wine',      name: 'Red Wine',        price: 100, pal: ['#7a1f3a', '#f4c2cf'], ears: 'bear', motif: 'hearts' },
+  { id: 'bag-palms',     name: 'Holiday Palms',   price: 130, pal: ['#5ccfe6', '#fff4d6'], ears: 'none', motif: 'palms' },
+  { id: 'bag-leopard',   name: 'Leopard Luxe',    price: 170, pal: ['#e8c08a', '#6b4423'], ears: 'cat',  motif: 'leopard' },
+  { id: 'bag-fireworks', name: 'Fireworks',       price: 220, pal: ['#1e2a66', '#ffd166'], ears: 'bear', motif: 'fireworks' },
+  { id: 'bag-cash',      name: 'Cash Money',      price: 300, pal: ['#5fbf7a', '#f4f1ea'], ears: 'none', motif: 'coins' },
+  { id: 'bag-gold',      name: 'Golden Grail',    price: 900, pal: ['#efc94c', '#fff6d0'], ears: 'cat',  motif: 'sparkle' },
+];
+
 // A stack of mini backpacks lying on their sides, from the floor up to the gap.
 function buildPile(topY, floorY) {
   const total = floorY - topY;
   const n = Math.max(1, Math.round(total / 56));
   const weights = Array.from({ length: n }, () => rand(0.85, 1.15));
   const sum = weights.reduce((a, b) => a + b, 0);
-  const items = [];
+  const items = [], owned = BAG_DESIGNS.filter(b => wallet.owned.has(b.id));
   let y = floorY;
   weights.forEach((wt, i) => {
+    const special = owned.length && Math.random() < 0.4 ? pick(owned) : null;
     const h = i === n - 1 ? y - topY : total * wt / sum;   // last bag reaches the gap exactly
     items.push({
       y: y - h, h, w: rand(76, 84), off: rand(-2, 2), tilt: rand(-0.04, 0.04),
       side: Math.random() < 0.5 ? -1 : 1,   // which way the domed top points
-      pal: pick(BAG_PALETTES), ears: pick(BAG_EARS), motif: pick(BAG_MOTIFS), seed: Math.random() * 1000,
+      pal: special ? special.pal : pick(BAG_PALETTES), ears: special ? special.ears : pick(BAG_EARS),
+      motif: special ? special.motif : pick(BAG_MOTIFS), seed: Math.random() * 1000,
     });
     y -= h;
   });
@@ -571,15 +645,61 @@ function spawnObstacle(x) {
   // Bottom hazard: a stack of mini backpacks.
   o.pile = buildPile(o.gapBottom, floorY);
 
-  // Maybe a can of beans halfway between the previous obstacle and this one.
-  if (d > 0 && Math.random() < C.beanChance) {
-    const by = clamp((game.lastGapCenter + center) / 2 + rand(-40, 40), top + 45, floorY - 45);
-    game.beans.push({ x: x - C.obstacleSpacing / 2, baseY: by, y: by, phase: rand(0, TAU), taken: false });
+  // Something to grab halfway between the previous obstacle and this one:
+  // a can of beans, a bottle of fizz or a Toot Coin banknote.
+  if (d > 0) {
+    const mx = x - C.obstacleSpacing / 2;
+    const my = clamp((game.lastGapCenter + center) / 2 + rand(-40, 40), top + 45, floorY - 45);
+    if (Math.random() < C.beanChance) game.beans.push({ x: mx, baseY: my, y: my, phase: rand(0, TAU), taken: false });
+    else if (d >= C.fizzStartAfter && player.fizzT <= 0 && !game.pickups.some(q => q.type === 'fizz') &&
+             Math.random() < C.fizzChance) addPickup('fizz', mx, my);
+    else if (Math.random() < C.noteChance) addPickup('note', mx, my);
+  }
+  // Toot Coins: a little arc through the gap, or rarely a risky bundle of notes near its edge.
+  if (d > 0 && Math.random() < C.coinRowChance) {
+    const n = randInt(3, 5);
+    for (let k = 0; k < n; k++) {
+      const f = k / (n - 1) - 0.5;
+      addPickup('coin', x + f * 30 * (n - 1), center + 7 - Math.cos(f * Math.PI) * 14);
+    }
+  } else if (d > 2 && Math.random() < C.stackChance) {
+    addPickup('stack', x, Math.random() < 0.5 ? o.gapTop + 24 : o.gapBottom - 24);
   }
 
   game.obstacles.push(o);
   game.lastGapCenter = center;
   game.spawned++;
+}
+
+function addPickup(type, x, y) {
+  game.pickups.push({ type, x, baseY: y, y, phase: rand(0, TAU), taken: false });
+}
+
+function collectPickup(q) {
+  const C = CONFIG, p = player;
+  q.taken = true;
+  if (q.type === 'fizz') {
+    p.fizzT = C.fizzDuration;
+    p.tank = C.tankMax;
+    p.smugT = 1.2;
+    Sound.cork();
+    emitSparkles(q.x, q.y, 16);
+    emitBubbles(q.x, q.y, 18);
+    popText('FIZZ BOOST!', q.x, q.y - 26, { size: 22, color: '#ff8fc8', max: 1.4, sub: 'Double points!' });
+    return;
+  }
+  const v = q.type === 'coin' ? 1 : q.type === 'note' ? C.noteValue : C.stackValue;
+  game.runCoins += v;
+  wallet.add(v);
+  if (q.type === 'coin') {
+    Sound.coin();
+    emitSparkles(q.x, q.y, 4);
+    popText('+1', q.x, q.y - 14, { size: 13, color: '#ffd65a', max: 0.6, rot: 0 });
+  } else {
+    Sound.cash();
+    emitSparkles(q.x, q.y, 14);
+    popText(`+${v} TOOT COINS!`, q.x, q.y - 22, { size: 16, color: '#ffd65a', max: 1.1 });
+  }
 }
 
 // Returns the cause of a hit ('fan' | 'lamp' | 'bags') or null.
@@ -609,10 +729,11 @@ function addParticle(p) {
 }
 
 function emitGas(x, y, dx, dy, count, sizeMul = 1, speedMul = 1) {
-  const base = Math.atan2(dy, dx);
+  const base = Math.atan2(dy, dx), fizz = player.fizzT > 0 && game.state === 'play';
   for (let i = 0; i < count; i++) {
     const a = base + rand(-0.55, 0.55), sp = rand(60, 200) * speedMul;
-    const hue = rand(68, 112), light = rand(52, 70);
+    const hue = fizz ? rand(318, 345) : rand(68, 112), light = rand(52, 70);
+    if (fizz && Math.random() < 0.3) emitBubbles(x, y, 1);
     addParticle({
       type: 'gas',
       x: x + rand(-3, 3), y: y + rand(-3, 3),
@@ -621,6 +742,14 @@ function emitGas(x, y, dx, dy, count, sizeMul = 1, speedMul = 1) {
       life: 0, max: rand(0.55, 1.15),
       c1: `hsl(${hue},62%,${light}%)`, c2: `hsl(${hue},75%,${Math.min(90, light + 18)}%)`,
     });
+  }
+}
+
+function emitBubbles(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const a = rand(0, TAU), sp = rand(30, 140);
+    addParticle({ type: 'bubble', x: x + rand(-4, 4), y: y + rand(-4, 4), vx: Math.cos(a) * sp - 30, vy: Math.sin(a) * sp,
+      r0: rand(1.5, 3.8), life: 0, max: rand(0.6, 1.3) });
   }
 }
 
@@ -662,6 +791,8 @@ function updateParticles(dt) {
       q.vy += 700 * dt; q.rot += q.vr * dt;
     } else if (q.type === 'spark') {
       q.vx *= 1 - 3 * dt; q.vy *= 1 - 3 * dt;
+    } else if (q.type === 'bubble') {
+      q.vx *= 1 - 2 * dt; q.vy = q.vy * (1 - 2 * dt) - 70 * dt;
     } else if (q.type === 'text') {
       q.vy *= 1 - 1.8 * dt;
     }
@@ -722,6 +853,7 @@ window.addEventListener('pointerdown', e => {
   Sound.unlock();
   const v = pointerToView(e);
   if (inMuteButton(v.x, v.y)) { toggleMute(); return; }
+  if (hitButton(v) || game.state === 'shop') return;
   input.pointers.add(e.pointerId);
   pressStart();
 }, { passive: false });
@@ -731,6 +863,11 @@ window.addEventListener('pointercancel', pointerUp);
 
 window.addEventListener('keydown', e => {
   if (e.code === 'KeyM') { Sound.unlock(); toggleMute(); return; }
+  if (game.state === 'shop') {
+    if (e.code === 'Escape' || ACTION_KEYS.has(e.code)) { e.preventDefault(); if (!e.repeat) closeShop(); }
+    return;
+  }
+  if (e.code === 'KeyS' && (game.state === 'title' || game.state === 'over')) { Sound.unlock(); openShop(); return; }
   if (!ACTION_KEYS.has(e.code)) return;
   e.preventDefault();
   if (e.repeat || input.keys.has(e.code)) return;
@@ -770,7 +907,7 @@ function flap() {
   const nz = nozzle();
   emitGas(nz.x, nz.y, nz.dx, nz.dy, 10 + Math.round(12 * climbBefore) + (big ? 12 : 0),
     1 + climbBefore * 0.8 + (big ? 0.5 : 0), 1 + climbBefore * 0.5);
-  Sound.fart({ power: 0.6 + climbBefore * 0.5 + (big ? 0.4 : 0) });
+  Sound.fart({ power: 0.6 + climbBefore * 0.5 + (big ? 0.4 : 0), fizzy: p.fizzT > 0 });
   if (big) {
     p.smugT = 0.6;
     popText(pick(PUFF_WORDS), nz.x - 24, nz.y + 8, { size: 18, vx: -40 });
@@ -796,6 +933,8 @@ function die(cause) {
   game.deathT = 0;
   game.deathCause = cause;
   game.deathSpeed = game.speed;
+  game.diedFizzy = p.fizzT > 0;
+  p.fizzT = 0;
   if (p.thrusting) { p.thrusting = false; Sound.stopHold(); }
   p.vy = cause === 'floor' ? -460 : cause === 'ceiling' ? 120 : -320;
   p.spin = (Math.random() < 0.5 ? -1 : 1) * rand(10, 15);
@@ -812,7 +951,8 @@ function gameOver() {
   game.overT = 0;
   game.newBest = game.score > game.best;
   if (game.newBest) { game.best = game.score; store.set('tootPilot.best', game.best); }
-  game.message = pick(MESSAGES.any.concat(MESSAGES[game.deathCause] || [], MESSAGES[game.deathCause] || []));
+  const extra = game.diedFizzy ? MESSAGES.fizz : MESSAGES[game.deathCause] || [];
+  game.message = pick(MESSAGES.any.concat(extra, extra));
 }
 
 function addScore(n) {
@@ -823,6 +963,7 @@ function addScore(n) {
     game.rank = r;
     Sound.rankUp();
     popText('RANK UP!', W / 2, H * 0.3, { screen: true, size: 30, color: '#ffe066', vy: -20, rot: 0, max: 1.8, sub: RANKS[r][1] });
+    launchFireworks(3);                     // a celebration in every window
   }
 }
 
@@ -839,7 +980,8 @@ function step(dt) {
   for (const o of game.obstacles) if (o.top.type === 'fan') o.top.angle += o.top.spin * dt;
 
   switch (game.state) {
-    case 'title': {
+    case 'title':
+    case 'shop': {
       game.cam += 80 * dt;
       const ph = game.time * 2.6;
       p.y = H * 0.45 + Math.sin(ph) * 14;
@@ -874,6 +1016,7 @@ function step(dt) {
   else if (game.state === 'play' && (p.thrusting || p.vy < -120)) p.expression = 'determined';
   else p.expression = 'happy';
 
+  updateFireworks(dt);
   updateParticles(dt);
 }
 
@@ -894,7 +1037,7 @@ function updatePlay(dt) {
     p.thrustTime += dt;
     p.sinceThrust = 0;
     Sound.startHold();
-    Sound.updateHold(climb);
+    Sound.updateHold(climb, p.fizzT > 0);
   } else {
     if (p.thrusting) endThrust();
     if (wantsThrust) {                      // holding with an empty tank: sad sputters
@@ -908,6 +1051,17 @@ function updatePlay(dt) {
     }
     p.sinceThrust += dt;
     if (p.sinceThrust > C.tankRefillDelay) p.tank = Math.min(C.tankMax, p.tank + C.tankRefillRate * dt);
+  }
+
+  // --- Fizz boost: bottomless tank, and a slightly tipsy wobble ---
+  if (p.fizzT > 0) {
+    p.fizzT -= dt;
+    p.tank = C.tankMax;
+    p.vy += Math.sin(game.time * 6.5) * C.fizzWobble * dt;
+    if (p.fizzT <= 0) {
+      Sound.fizzOut();
+      popText('Fizz worn off', game.cam + p.x, p.y - 34, { size: 14, color: '#ffd1e0', max: 1 });
+    }
   }
 
   // --- Physics ---
@@ -933,11 +1087,18 @@ function updatePlay(dt) {
   }
   game.obstacles = game.obstacles.filter(o => o.x > game.cam - 200);
   game.beans = game.beans.filter(b => b.x > game.cam - 100 && !b.taken);
+  game.pickups = game.pickups.filter(q => q.x > game.cam - 100 && !q.taken);
 
   const pwx = game.cam + p.x;
   let near = p.y - r < C.ceilingY + 28 || p.y + r > floorY - 28;
   for (const o of game.obstacles) {
-    if (!o.passed && o.x < pwx - 10) { o.passed = true; addScore(1); Sound.blip(); }
+    if (!o.passed && o.x < pwx - 10) {
+      o.passed = true;
+      const pts = p.fizzT > 0 ? 2 : 1;
+      addScore(pts);
+      Sound.blip();
+      if (pts > 1) popText('x2', pwx + 12, p.y - 30, { size: 16, color: '#ff8fc8', max: 0.7 });
+    }
     const dx = o.x - pwx;
     if (dx > -160 && dx < 160) {
       const hit = obstacleHit(o, pwx, p.y, r * 0.9);
@@ -954,11 +1115,19 @@ function updatePlay(dt) {
       b.taken = true;
       p.tank = Math.min(C.tankMax, p.tank + C.beanRefill);
       p.smugT = 1;
-      addScore(C.beanPoints);
+      const pts = C.beanPoints * (p.fizzT > 0 ? 2 : 1);
+      addScore(pts);
       Sound.beans();
       emitSparkles(b.x, b.y, 18);
-      popText(`+${C.beanPoints} BEANS!`, b.x, b.y - 20, { size: 18, color: '#ffb347', max: 1.1 });
+      popText(`+${pts} BEANS!`, b.x, b.y - 20, { size: 18, color: '#ffb347', max: 1.1 });
     }
+  }
+
+  // --- Toot Coins & fizz bottles ---
+  for (const q of game.pickups) {
+    if (q.taken) continue;
+    q.y = q.baseY + Math.sin(game.time * 3 + q.phase) * (q.type === 'coin' ? 3 : 6);
+    if (Math.hypot(q.x - pwx, q.y - p.y) < r + (q.type === 'coin' ? 11 : 16)) collectPickup(q);
   }
 
   // --- Floor & ceiling ---
@@ -1000,7 +1169,17 @@ function updateDying(dt) {
 const FONT = '"Comic Sans MS","Chalkboard SE","Comic Neue","Trebuchet MS",system-ui,sans-serif';
 const BOOK_COLORS = ['#e05d5d', '#5d8de0', '#e0c05d', '#6cc48a', '#a56de0', '#e08a5d', '#4fb3b3'];
 
-const dawnFactor = () => (game.state === 'title' ? 0 : clamp((game.score - 20) / 40, 0, 1));
+const dawnFactor = () => (game.state === 'title' || game.state === 'shop' ? 0 : clamp((game.score - 20) / 40, 0, 1));
+
+// Windows sit on a parallax layer; this lists the ones on screen (x in view space).
+const WINDOW_SPACING = 620, WINDOW_Y = 78, WINDOW_W = 120, WINDOW_H = 160;
+function visibleWindows(cam) {
+  const wcam = cam * 0.4, out = [];
+  for (let i = Math.floor((wcam - 400) / WINDOW_SPACING); i <= Math.floor((wcam + W + 100) / WINDOW_SPACING); i++) {
+    out.push({ i, x: i * WINDOW_SPACING + 80 + hash2(i, 3) * 240 - wcam });
+  }
+  return out;
+}
 
 function celestialX(cam, offset) {
   const span = W + 300;
@@ -1021,10 +1200,7 @@ function drawBackground(cam) {
   ctx.restore();
 
   // Layer 1: windows with the night sky (and a moving moon / sun)
-  const WS = 620, wcam = cam * 0.4;
-  for (let i = Math.floor((wcam - 400) / WS); i <= Math.floor((wcam + W + 100) / WS); i++) {
-    drawWindow(i * WS + 80 + hash2(i, 3) * 240 - wcam, 78, 120, 160, i, dawn, cam);
-  }
+  for (const wn of visibleWindows(cam)) drawWindow(wn.x, WINDOW_Y, WINDOW_W, WINDOW_H, wn.i, dawn, cam);
 
   // Layer 2: shelves, picture frames, clocks
   const MS = 280, mcam = cam * 0.6;
@@ -1118,6 +1294,8 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
     ctx.fillStyle = 'rgba(255,220,120,0.35)'; ctx.beginPath(); ctx.arc(sx, sy, 36, 0, TAU); ctx.fill();
     ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(sx, sy, 24, 0, TAU); ctx.fill();
   }
+  drawPlane(cam, dawn);
+  drawFireworks(cam);
   // rooftops
   ctx.fillStyle = mixColor('#151a3d', '#6a4a6a', dawn);
   for (let k = 0; k < 4; k++) {
@@ -1143,6 +1321,94 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
   ctx.beginPath(); ctx.moveTo(x - 34, y - 16); ctx.lineTo(x + w + 34, y - 16); ctx.stroke();
   ctx.fillStyle = '#c99a5a';
   ctx.beginPath(); ctx.arc(x - 36, y - 16, 5, 0, TAU); ctx.arc(x + w + 36, y - 16, 5, 0, TAU); ctx.fill();
+}
+
+// A plane crosses the sky every so often; it's only seen through the windows.
+function drawPlane(cam, dawn) {
+  const span = 2600;
+  let x = (game.time * 45 - cam * 0.05) % span;
+  if (x < 0) x += span;
+  x -= 300;
+  const y = 108 + Math.sin(game.time * 0.3) * 8;
+  if (x < -140 || x > W + 60) return;
+  const g = ctx.createLinearGradient(x - 130, 0, x - 14, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, `rgba(255,255,255,${0.28 * (1 - dawn * 0.5)})`);
+  ctx.strokeStyle = g; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x - 130, y + 1); ctx.lineTo(x - 14, y + 1); ctx.stroke();
+  ctx.fillStyle = mixColor('#4a5288', '#e9ecf5', dawn);
+  ctx.beginPath(); ctx.moveTo(x - 2, y); ctx.lineTo(x - 7, y - 6); ctx.lineTo(x - 4, y - 6); ctx.lineTo(x + 4, y); ctx.fill();   // far wing
+  ctx.beginPath(); ctx.ellipse(x, y, 13, 2.8, 0, 0, TAU); ctx.fill();                                                         // fuselage
+  ctx.beginPath(); ctx.moveTo(x - 9, y); ctx.lineTo(x - 14, y - 7); ctx.lineTo(x - 11, y - 7); ctx.lineTo(x - 6, y); ctx.fill();  // tail
+  ctx.beginPath(); ctx.moveTo(x - 1, y + 1); ctx.lineTo(x - 8, y + 8); ctx.lineTo(x - 4, y + 8); ctx.lineTo(x + 5, y + 1); ctx.fill(); // near wing
+  ctx.fillStyle = '#ffe9a8';
+  for (let k = 0; k < 5; k++) ctx.fillRect(x - 6 + k * 3, y - 1, 1.4, 1.2);
+  const blink = (game.time * 1.4) % 1 < 0.18;
+  if (blink) {
+    ctx.fillStyle = '#ff5050'; ctx.beginPath(); ctx.arc(x - 7.5, y + 8, 1.6, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#5dff7a'; ctx.beginPath(); ctx.arc(x - 6.5, y - 6, 1.4, 0, TAU); ctx.fill();
+  }
+  if ((game.time * 1.4 + 0.5) % 1 < 0.1) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x - 13.5, y - 7, 1.4, 0, TAU); ctx.fill(); }
+}
+
+// Fireworks live in "sky space" (like the moon) so they stay put while a window slides past.
+function launchFireworks(perWindow) {
+  const wins = visibleWindows(game.cam).filter(wn => wn.x + WINDOW_W > 30 && wn.x < W - 30);
+  for (const wn of wins) {
+    for (let k = 0; k < perWindow; k++) {
+      game.fireworks.push({
+        sx: wn.x + WINDOW_W * rand(0.4, 0.95) + game.cam * 0.05, y: rand(100, 160),
+        t: -k * rand(0.25, 0.5), hue: rand(0, 360), n: randInt(14, 22), r: rand(24, 38), seed: rand(0, TAU), popped: false,
+      });
+    }
+  }
+}
+
+function updateFireworks(dt) {
+  game.fwT -= dt;
+  if (game.fwT <= 0) {
+    game.fwT = rand(7, 15);
+    const wins = visibleWindows(game.cam).filter(wn => wn.x + WINDOW_W > W * 0.3 && wn.x < W - 60);
+    if (wins.length) {
+      const wn = pick(wins);
+      game.fireworks.push({ sx: wn.x + WINDOW_W * rand(0.5, 0.95) + game.cam * 0.05, y: rand(100, 160),
+        t: 0, hue: rand(0, 360), n: randInt(14, 22), r: rand(24, 38), seed: rand(0, TAU), popped: false });
+    }
+  }
+  for (const f of game.fireworks) {
+    f.t += dt;
+    if (!f.popped && f.t >= 0.6) { f.popped = true; Sound.firework(); }
+  }
+  game.fireworks = game.fireworks.filter(f => f.t < 2.4);
+}
+
+function drawFireworks(cam) {
+  for (const f of game.fireworks) {
+    if (f.t < 0) continue;
+    const x = f.sx - cam * 0.05;
+    if (x < -60 || x > W + 60) continue;
+    if (f.t < 0.6) {                                   // rocket climbing
+      const k = f.t / 0.6, ry = 240 - (240 - f.y) * (1 - (1 - k) * (1 - k));
+      ctx.strokeStyle = `hsla(${f.hue},90%,80%,0.5)`; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(x, ry); ctx.lineTo(x, ry + 10); ctx.stroke();
+      ctx.fillStyle = '#fff8d0'; ctx.beginPath(); ctx.arc(x, ry, 1.6, 0, TAU); ctx.fill();
+      continue;
+    }
+    const u = f.t - 0.6, a = clamp(1 - u / 1.7, 0, 1);
+    if (u < 0.15) {
+      ctx.fillStyle = `rgba(255,255,255,${0.35 * (1 - u / 0.15)})`;
+      ctx.beginPath(); ctx.arc(x, f.y, 16, 0, TAU); ctx.fill();
+    }
+    const d = f.r * (1 - Math.exp(-4 * u));
+    ctx.globalAlpha = a;
+    for (let k = 0; k < f.n; k++) {
+      const ang = k / f.n * TAU + f.seed, c = Math.cos(ang), sn = Math.sin(ang), drop = 22 * u * u;
+      ctx.fillStyle = k % 3 === 0 ? '#fff' : `hsl(${f.hue + (k % 2) * 35},95%,66%)`;
+      ctx.beginPath(); ctx.arc(x + c * d, f.y + sn * d + drop, 2.3 * (1 - u / 3), 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + c * d * 0.78, f.y + sn * d * 0.78 + drop, 1.3, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + c * d * 0.56, f.y + sn * d * 0.56 + drop, 0.8, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawCurtain(x0, y, w, h, flip) {
@@ -1476,6 +1742,34 @@ function drawMotif(motif, x, y, r, trim, k) {
     ctx.fill();
   } else if (motif === 'stars') {
     ctx.fillStyle = k % 2 ? '#ffd166' : trim; drawSparkle(x, y, r * 1.3);
+  } else if (motif === 'sparkle') {
+    ctx.fillStyle = '#fff'; drawSparkle(x, y, r * 1.4);
+  } else if (motif === 'bubbles') {
+    ctx.strokeStyle = trim; ctx.lineWidth = Math.max(0.6, r * 0.25);
+    ctx.beginPath(); ctx.arc(x, y, r * 0.9, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x + r * 1.7, y - r * 1.2, r * 0.5, 0, TAU); ctx.stroke();
+  } else if (motif === 'palms') {
+    ctx.strokeStyle = '#8a5a3b'; ctx.lineWidth = Math.max(0.6, r * 0.35);
+    ctx.beginPath(); ctx.moveTo(x, y + r * 1.6); ctx.quadraticCurveTo(x + r * 0.6, y + r * 0.4, x, y - r * 0.6); ctx.stroke();
+    ctx.fillStyle = '#3fae5c';
+    for (const a of [-2.7, -2, -1.2, -0.45]) {
+      ctx.beginPath(); ctx.ellipse(x + Math.cos(a) * r * 0.9, y - r * 0.6 + Math.sin(a) * r * 0.5, r, r * 0.3, a, 0, TAU); ctx.fill();
+    }
+  } else if (motif === 'leopard') {
+    ctx.strokeStyle = trim; ctx.lineWidth = r * 0.45;
+    ctx.beginPath(); ctx.ellipse(x, y, r * 0.9, r * 0.7, k, 0.3, TAU - 0.6); ctx.stroke();
+  } else if (motif === 'fireworks') {
+    ctx.strokeStyle = ['#ff8fc8', '#ffd166', '#7ad3ff', '#9be564'][k % 4]; ctx.lineWidth = Math.max(0.5, r * 0.25);
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = i * TAU / 8;
+      ctx.moveTo(x + Math.cos(a) * r * 0.45, y + Math.sin(a) * r * 0.45); ctx.lineTo(x + Math.cos(a) * r * 1.3, y + Math.sin(a) * r * 1.3);
+    }
+    ctx.stroke();
+  } else if (motif === 'coins') {
+    ctx.fillStyle = '#f5b82e'; ctx.strokeStyle = '#a86f12'; ctx.lineWidth = Math.max(0.5, r * 0.2);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffd65a'; ctx.beginPath(); ctx.arc(x, y, r * 0.55, 0, TAU); ctx.fill();
   } else {
     ctx.fillStyle = k % 2 ? '#ff8fab' : trim; drawHeart(x, y, r);
   }
@@ -1533,10 +1827,123 @@ function drawBeans(cam) {
   }
 }
 
+// A Toot Coin. `spin` turns it edge-on and back.
+function drawCoin(x, y, spin, s = 1) {
+  const k = Math.abs(Math.cos(spin)) * 0.85 + 0.15;
+  ctx.save(); ctx.translate(x, y); ctx.scale(k * s, s);
+  ctx.fillStyle = '#f5b82e'; ctx.strokeStyle = '#a86f12'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, 0, 9, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ffd65a'; ctx.beginPath(); ctx.arc(0, 0, 6.5, 0, TAU); ctx.fill();
+  if (k > 0.5) {
+    ctx.fillStyle = '#b07a14'; ctx.font = `bold 10px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('T', 0, 0.5);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.beginPath(); ctx.arc(-3, -3.5, 2, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+function drawNote(x, y, rot, label) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.fillStyle = '#a7e3b0'; ctx.strokeStyle = '#3f8a52'; ctx.lineWidth = 1.2;
+  roundRect(ctx, -14, -8, 28, 16, 2); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(63,138,82,0.5)'; roundRect(ctx, -11.5, -5.5, 23, 11, 1.5); ctx.stroke();
+  ctx.fillStyle = '#fff6d0'; ctx.beginPath(); ctx.ellipse(0, 0, 5, 4.5, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#3f8a52'; ctx.font = `bold 7px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('T', 0, 0.5);
+  ctx.font = `bold 5px ${FONT}`; ctx.fillText(label, -9, -3); ctx.fillText(label, 9, 3.5);
+  ctx.restore();
+}
+
+// A bottle of something lightly sparkling: pale glass, pink cap, hearts and a pastel label.
+function drawFizzBottle(x, y, rot, s = 1) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  const glass = () => {
+    ctx.beginPath();
+    ctx.moveTo(-8, 18); ctx.lineTo(-8, -2);
+    ctx.bezierCurveTo(-8, -9, -3.4, -10, -3.4, -15); ctx.lineTo(-3.4, -24); ctx.lineTo(3.4, -24); ctx.lineTo(3.4, -15);
+    ctx.bezierCurveTo(3.4, -10, 8, -9, 8, -2); ctx.lineTo(8, 18);
+    ctx.quadraticCurveTo(8, 21, 5, 21); ctx.lineTo(-5, 21); ctx.quadraticCurveTo(-8, 21, -8, 18);
+    ctx.closePath();
+  };
+  glass(); ctx.fillStyle = '#eef3cf'; ctx.fill();
+  ctx.save(); glass(); ctx.clip();
+  ctx.fillStyle = '#e2eaa8'; ctx.fillRect(-9, -6, 18, 28);                 // the drink
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  for (let k = 0; k < 4; k++) {                                           // bubbles rising
+    const by = 19 - ((game.time * 18 + k * 7) % 24);
+    ctx.beginPath(); ctx.arc(-4 + k * 2.6, by, 0.8, 0, TAU); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fillRect(-6, -4, 2, 22);   // shine
+  ctx.restore();
+  ctx.strokeStyle = '#a9b38a'; ctx.lineWidth = 1; glass(); ctx.stroke();
+  // pink foil cap
+  ctx.fillStyle = '#e9798f'; roundRect(ctx, -3.9, -25, 7.8, 11, 1.5); ctx.fill();
+  ctx.fillStyle = '#d65f78'; ctx.fillRect(-3.9, -25, 7.8, 2.5); ctx.fillRect(-3.9, -16.5, 7.8, 1.2);
+  // embossed hearts on the shoulder
+  ctx.fillStyle = 'rgba(255,255,255,0.75)'; drawHeart(-3.5, -4, 1.8); drawHeart(4, -1.5, 1.8);
+  // label with pastel blobs
+  ctx.save();
+  ctx.fillStyle = '#fbfbf5'; ctx.fillRect(-7.5, 5, 15, 12);
+  ctx.beginPath(); ctx.rect(-7.5, 5, 15, 12); ctx.clip();
+  ctx.fillStyle = '#c9e86a'; ctx.beginPath(); ctx.arc(-5, 15, 3.2, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ff9fb4'; ctx.beginPath(); ctx.arc(0.5, 11, 4.2, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ffd95c'; ctx.beginPath(); ctx.arc(5.5, 7.5, 2.5, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ef4f5f'; ctx.save(); ctx.translate(-2, 7); ctx.rotate(-0.25); ctx.fillRect(-6, -0.8, 9, 1.6); ctx.restore();
+  ctx.fillStyle = '#3a2a3a'; ctx.fillRect(-4, 12, 8, 1.1);
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawPickups(cam) {
+  for (const q of game.pickups) {
+    if (q.taken) continue;
+    const sx = q.x - cam;
+    if (sx < -40 || sx > W + 40) continue;
+    const pulse = 0.5 + 0.5 * Math.sin(game.time * 6 + q.phase);
+    if (q.type === 'coin') { drawCoin(sx, q.y, game.time * 4 + q.phase); continue; }
+    ctx.fillStyle = q.type === 'fizz' ? `rgba(255,140,200,${0.2 + 0.15 * pulse})` : `rgba(255,214,90,${0.16 + 0.14 * pulse})`;
+    ctx.beginPath(); ctx.arc(sx, q.y, (q.type === 'fizz' ? 28 : 22) + pulse * 4, 0, TAU); ctx.fill();
+    const flutter = Math.sin(game.time * 5 + q.phase) * 0.25;
+    if (q.type === 'note') drawNote(sx, q.y, flutter, String(CONFIG.noteValue));
+    else if (q.type === 'stack') {
+      for (let k = 2; k >= 0; k--) drawNote(sx + k * 2 - 2, q.y + k * 3 - 3, -0.08 + k * 0.06, String(CONFIG.stackValue));
+      ctx.fillStyle = '#ff8fc8'; ctx.fillRect(sx - 3, q.y - 9, 6, 18);
+    } else drawFizzBottle(sx, q.y, flutter * 0.6);
+  }
+}
+
 /* ---------------------------------------------------------------------
    12. RENDER: PLAYER & PARTICLES
    --------------------------------------------------------------------- */
-const PJ = '#ff8fc8', PJ_DARK = '#e46aa9', PJ_OUT = '#a93f78';
+// Pyjamas from the shop. `pattern` is drawn on the top; `pc` is its colour.
+const PYJAMAS = [
+  { id: 'pj-pink',      name: 'Classic Pink',     price: 0,   body: '#ff8fc8', dark: '#e46aa9', out: '#a93f78', collar: '#8fd3ff', pattern: 'dots',      pc: 'rgba(255,255,255,0.85)' },
+  { id: 'pj-lilac',     name: 'Starry Lilac',     price: 40,  body: '#b89cff', dark: '#9478e0', out: '#5e43a3', collar: '#ffe066', pattern: 'stars',     pc: '#fff6b0' },
+  { id: 'pj-mint',      name: 'Minty Stripes',    price: 60,  body: '#8fe3c4', dark: '#62c4a2', out: '#2f7d63', collar: '#ff9fc0', pattern: 'stripes',   pc: 'rgba(255,255,255,0.8)' },
+  { id: 'pj-wine',      name: 'Red Wine Hearts',  price: 90,  body: '#9c2f4a', dark: '#7a2238', out: '#4a1020', collar: '#ffd1e0', pattern: 'hearts',    pc: '#ffd1e0' },
+  { id: 'pj-leopard',   name: 'Leopard Lounge',   price: 120, body: '#e8b97a', dark: '#cf9a5a', out: '#7a5228', collar: '#2a1d1a', pattern: 'leopard',   pc: '#5a3a1e' },
+  { id: 'pj-holiday',   name: 'Holiday Palms',    price: 150, body: '#5ccfe6', dark: '#38aac4', out: '#1f6b80', collar: '#ffd166', pattern: 'palms',     pc: '#fff' },
+  { id: 'pj-emo',       name: 'Midnight Emo',     price: 220, body: '#2e2838', dark: '#1f1a27', out: '#0e0b12', collar: '#ff4d6d', pattern: 'bats',      pc: '#e9e3f2' },
+  { id: 'pj-fireworks', name: 'Fireworks Fiesta', price: 320, body: '#273a8a', dark: '#1b2a66', out: '#0e173d', collar: '#ff8fc8', pattern: 'fireworks', pc: '#fff' },
+  { id: 'pj-gold',      name: 'Golden Glam',      price: 750, body: '#f2cf63', dark: '#d9ac3a', out: '#8a6512', collar: '#fff6d0', pattern: 'sparkle',   pc: '#fff' },
+];
+let outfit, PJ, PJ_DARK, PJ_OUT;
+function applyOutfit(o) { outfit = o; PJ = o.body; PJ_DARK = o.dark; PJ_OUT = o.out; }
+applyOutfit(PYJAMAS.find(o => o.id === wallet.pj) || PYJAMAS[0]);
+
+function drawPjPattern(o) {
+  if (o.pattern === 'dots') {
+    ctx.fillStyle = o.pc;
+    [[-5, -2], [3, -5], [5, 6], [-3, 9], [-7, 6], [8, 0], [0, 2], [-2, -8]].forEach(([dx, dy]) => {
+      ctx.beginPath(); ctx.arc(dx, dy, 1.6, 0, TAU); ctx.fill();
+    });
+  } else if (o.pattern === 'stripes') {
+    ctx.fillStyle = o.pc;
+    for (let x = -10; x < 12; x += 5) ctx.fillRect(x, -10, 2, 26);
+  } else {
+    [[-5, -3], [4, -6], [5, 6], [-3, 9], [-7, 5], [0, 1]].forEach(([dx, dy], k) => drawMotif(o.pattern, dx, dy, 1.7, o.pc, k));
+  }
+}
 const SKIN = '#ffd9bd', SKIN_OUT = '#c98e6e', HAIR = '#7b3a2c';
 
 function drawShadow(y) {
@@ -1592,14 +1999,11 @@ function drawPlayer(y) {
   ctx.fillStyle = PJ;
   ctx.beginPath(); ctx.ellipse(0, 3, 10.5, 12.5, 0, 0, TAU); ctx.fill();
   ctx.save(); ctx.clip();
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  [[-5, -2], [3, -5], [5, 6], [-3, 9], [-7, 6], [8, 0], [0, 2], [-2, -8]].forEach(([dx, dy]) => {
-    ctx.beginPath(); ctx.arc(dx, dy, 1.6, 0, TAU); ctx.fill();
-  });
+  drawPjPattern(outfit);
   ctx.restore();
   ctx.strokeStyle = PJ_OUT; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.ellipse(0, 3, 10.5, 12.5, 0, 0, TAU); ctx.stroke();
-  ctx.fillStyle = '#8fd3ff';    // collar
+  ctx.fillStyle = outfit.collar;    // collar
   ctx.beginPath(); ctx.moveTo(-1, -8); ctx.lineTo(4, -4); ctx.lineTo(8, -8); ctx.lineTo(4, -10); ctx.fill();
   ctx.strokeStyle = '#5b3a66'; ctx.lineWidth = 2.5;  // jetpack straps
   ctx.beginPath(); ctx.moveTo(-9, -6); ctx.quadraticCurveTo(0, -12, 3, -3); ctx.moveTo(-10, 8); ctx.lineTo(9, 7); ctx.stroke();
@@ -1756,6 +2160,11 @@ function drawParticles(cam, layer) {
     } else if (q.type === 'spark') {
       ctx.globalAlpha = 1 - t;
       ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(x, y, q.r0 * (1 - t * 0.5), 0, TAU); ctx.fill();
+    } else if (q.type === 'bubble') {
+      ctx.globalAlpha = (1 - t) * 0.9;
+      ctx.strokeStyle = '#fff0f7'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, q.r0, 0, TAU); ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x - q.r0 * 0.35, y - q.r0 * 0.35, q.r0 * 0.3, 0, TAU); ctx.fill();
     } else if (q.type === 'text') {
       ctx.globalAlpha = t > 0.7 ? (1 - t) / 0.3 : 1;
       const pop = t < 0.15 ? easeOutBack(t / 0.15) : 1;
@@ -1814,12 +2223,12 @@ function drawMuteButton() {
 function drawGasMeter() {
   const p = player, C = CONFIG;
   const x = 14, y = H - 40, w = Math.min(150, W * 0.4), h = 18;
-  const frac = p.tank / C.tankMax, low = frac < 0.25;
-  drawText('GAS', x, y - 18, 14, '#d8ff7a', 'left');
+  const frac = p.tank / C.tankMax, fizz = p.fizzT > 0, low = frac < 0.25 && !fizz;
+  drawText(fizz ? 'FIZZ! x2' : 'GAS', x, y - 18, 14, fizz ? '#ff8fc8' : '#d8ff7a', 'left');
   ctx.fillStyle = 'rgba(43,23,64,0.85)'; roundRect(ctx, x - 3, y - 3, w + 6, h + 6, 9); ctx.fill();
   if (frac > 0) {
     const g = ctx.createLinearGradient(x, 0, x + w, 0);
-    g.addColorStop(0, '#6fd34a'); g.addColorStop(1, '#d8ff7a');
+    g.addColorStop(0, fizz ? '#ff6fb0' : '#6fd34a'); g.addColorStop(1, fizz ? '#ffd1e8' : '#d8ff7a');
     ctx.fillStyle = low ? (Math.sin(game.time * 20) > 0 ? '#ff5d5d' : '#ffb35d') : g;
     roundRect(ctx, x, y, Math.max(h, w * frac), h, 7); ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.3)'; roundRect(ctx, x + 3, y + 2, Math.max(h, w * frac) - 6, 4, 2); ctx.fill();
@@ -1831,13 +2240,26 @@ function drawGasMeter() {
       ctx.beginPath(); ctx.arc(bx, y + h / 2 + Math.sin(game.time * 10 + k) * 3, 2, 0, TAU); ctx.fill();
     }
   }
+  if (fizz) {                                    // how much fizz is left
+    ctx.fillStyle = 'rgba(43,23,64,0.85)'; roundRect(ctx, x - 3, y + h + 5, w + 6, 8, 4); ctx.fill();
+    ctx.fillStyle = '#ff8fc8'; roundRect(ctx, x, y + h + 6, Math.max(6, w * p.fizzT / C.fizzDuration), 6, 3); ctx.fill();
+  }
   if (frac <= 0.001 && input.held) drawText('EMPTY!', x + w / 2, y + h / 2, 12, '#fff');
+}
+
+function drawCoinCounter(x, y, size = 18, align = 'left') {
+  const str = String(wallet.coins);
+  ctx.font = `bold ${size}px ${FONT}`;
+  const tw = ctx.measureText(str).width, total = size + 6 + tw;
+  const x0 = align === 'left' ? x : align === 'right' ? x - total : x - total / 2;
+  drawCoin(x0 + size / 2, y, 0, size / 19);
+  drawText(str, x0 + size + 6, y + 1, size, '#ffd65a', 'left');
 }
 
 function drawHUD() {
   const s = 46 * (1 + game.scorePulse * 0.25);
   drawText(String(game.score), W / 2, 82, s, '#fff');
-  if (game.state === 'play' || game.state === 'dying') drawGasMeter();
+  if (game.state === 'play' || game.state === 'dying') { drawGasMeter(); drawCoinCounter(16, 24); }
 }
 
 function drawTitle() {
@@ -1857,19 +2279,170 @@ function drawTitle() {
   const lines = [
     ['TAP / CLICK / SPACE to toot upward', '#fff'],
     ['HOLD for a turbo toot (uses gas)', '#fff'],
-    ['Grab the beans to refill your tank!', '#ffb347'],
+    ['Beans refill your gas. Coins buy goodies!', '#ffb347'],
   ];
   const ls = Math.min(18, ...lines.map(([l]) => fitSize(l, 18, W - 30)));
   lines.forEach(([l, c], i) => drawText(l, W / 2, 400 + i * (ls + 10), ls, c));
   if (Math.sin(game.time * 5) > -0.3) drawText('Tap to start!', W / 2, 505, 26, '#ffe066');
   if (game.best > 0) drawText(`Best: ${game.best}  ·  ${RANKS[rankIndex(game.best)][1]}`, W / 2, 545, fitSize(`Best: ${game.best}  ·  ${RANKS[rankIndex(game.best)][1]}`, 16, W - 30), '#cfc2ea');
+  drawShopButton(W / 2, 592);
+}
+
+// --- Buttons: drawn each frame and remembered so taps can find them ---
+let uiButtons = [];
+function hitButton(v) {
+  for (let i = uiButtons.length - 1; i >= 0; i--) {
+    const b = uiButtons[i];
+    if (v.x >= b.x && v.x <= b.x + b.w && v.y >= b.y && v.y <= b.y + b.h) { b.onTap(); return true; }
+  }
+  return false;
+}
+function uiButton(x, y, w, h, label, onTap, fill = '#ff8fc8', size = 18, radius = h / 2) {
+  ctx.fillStyle = fill; roundRect(ctx, x, y, w, h, radius); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#2b1740'; ctx.stroke();
+  if (label) drawText(label, x + w / 2, y + h / 2 + 1, fitSize(label, size, w - 16), '#fff');
+  uiButtons.push({ x, y, w, h, onTap });
+}
+function drawShopButton(cx, cy) {
+  const w = 190, h = 42;
+  uiButton(cx - w / 2, cy - h / 2, w, h, '', openShop, '#ff8fc8');
+  drawText('SHOP', cx - 38, cy + 1, 20, '#fff');
+  drawCoinCounter(cx + 2, cy, 17);
+}
+
+function openShop() {
+  if (game.state !== 'title' && !(game.state === 'over' && game.overT > 0.3)) return;
+  releaseAll();
+  game.state = 'shop';
+  game.shopSel = null; game.shopNote = null;
+  Sound.click();
+}
+function closeShop() {
+  game.state = 'title';
+  game.obstacles = []; game.beans = []; game.pickups = [];
+  game.shopSel = null;
+  Sound.click();
+}
+function shopNote(text, color = '#2b1740') { game.shopNote = { text, color, t: game.time }; }
+
+function shopTap(item, isPj) {
+  const owned = item.price === 0 || wallet.owned.has(item.id);
+  if (owned) {
+    game.shopSel = null;
+    if (isPj) {
+      if (wallet.pj !== item.id) { wallet.pj = item.id; wallet.save(); applyOutfit(item); Sound.blip(); }
+      shopNote(`Wearing ${item.name}`);
+    } else { Sound.click(); shopNote('Already in your bag stacks!'); }
+    return;
+  }
+  if (wallet.coins < item.price) {
+    game.shopSel = null;
+    Sound.nope();
+    shopNote(`Need ${item.price - wallet.coins} more Toot Coins`, '#c2335a');
+    return;
+  }
+  if (game.shopSel !== item.id) { game.shopSel = item.id; Sound.click(); return; }   // tap again to confirm
+  wallet.coins -= item.price;
+  wallet.owned.add(item.id);
+  if (isPj) { wallet.pj = item.id; applyOutfit(item); }
+  wallet.save();
+  game.shopSel = null;
+  Sound.buy();
+  shopNote(isPj ? `New pyjamas! Wearing ${item.name}` : `${item.name} will turn up in the stacks!`, '#2f8a4a');
+}
+
+// Draws the pilot in some pyjamas, centred at (x, y), for the shop.
+function drawPilotPreview(o, x, y, s) {
+  const prev = outfit, p = player;
+  const keep = { x: p.x, angle: p.angle, stretch: p.stretch, expression: p.expression, thrusting: p.thrusting };
+  applyOutfit(o);
+  Object.assign(p, { x: 0, angle: 0, stretch: 0, expression: 'happy', thrusting: false });
+  ctx.save(); ctx.translate(x + 3 * s, y + 3 * s); ctx.scale(s, s);
+  drawPlayer(0);
+  ctx.restore();
+  Object.assign(p, keep);
+  applyOutfit(prev);
+}
+
+function drawShop() {
+  ctx.fillStyle = 'rgba(20,8,35,0.82)'; ctx.fillRect(0, 0, W, H);
+  const pw = Math.min(W - 16, 560), px = (W - pw) / 2, top = 14, ph = H - 28;
+  ctx.fillStyle = '#fff6e8'; roundRect(ctx, px, top, pw, ph, 22); ctx.fill();
+  ctx.lineWidth = 4; ctx.strokeStyle = '#2b1740'; ctx.stroke();
+  ctx.save(); roundRect(ctx, px, top, pw, ph, 22); ctx.clip();
+  ctx.fillStyle = '#ff8fc8'; ctx.fillRect(px, top, pw, 56);
+  ctx.restore();
+  ctx.beginPath(); ctx.moveTo(px, top + 56); ctx.lineTo(px + pw, top + 56); ctx.stroke();
+  drawText('SHOP', px + 18, top + 29, 30, '#fff', 'left');
+  drawCoinCounter(Math.min(px + pw - 18, MUTE_BTN.x - MUTE_BTN.r - 12), top + 29, 20, 'right');   // keep clear of the mute button
+
+  // tabs
+  const tabW = (pw - 36) / 2, tabY = top + 68;
+  [['pj', 'PYJAMAS'], ['bags', 'BAGS']].forEach(([id, label], i) => {
+    const on = game.shopTab === id;
+    uiButton(px + 12 + i * (tabW + 12), tabY, tabW, 36, label, () => {
+      if (game.shopTab !== id) { game.shopTab = id; game.shopSel = null; Sound.click(); }
+    }, on ? '#9be564' : '#c9b6e8', 17);
+  });
+
+  // item cards, 3 x 3
+  const isPj = game.shopTab === 'pj', items = isPj ? PYJAMAS : BAG_DESIGNS;
+  const gx = px + 12, gw = pw - 24, gap = 8, gridTop = tabY + 48, gridBottom = H - 80;
+  const cw = (gw - gap * 2) / 3, ch = (gridBottom - gridTop - gap * 2) / 3;
+  items.forEach((item, i) => {
+    const cx0 = gx + (i % 3) * (cw + gap), cy0 = gridTop + Math.floor(i / 3) * (ch + gap);
+    const owned = item.price === 0 || wallet.owned.has(item.id), wearing = isPj && wallet.pj === item.id;
+    const pending = game.shopSel === item.id, afford = wallet.coins >= item.price;
+    uiButton(cx0, cy0, cw, ch, '', () => shopTap(item, isPj), '#ffffff', 18, 14);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = pending ? '#ff4f9a' : wearing ? '#5cc23a' : '#2b1740';
+    roundRect(ctx, cx0, cy0, cw, ch, 14); ctx.stroke();
+    // preview
+    const pcx = cx0 + cw / 2, pcy = cy0 + (ch - 30) / 2 + 2;
+    ctx.save(); roundRect(ctx, cx0 + 3, cy0 + 3, cw - 6, ch - 34, 12); ctx.clip();
+    if (isPj) drawPilotPreview(item, pcx, pcy, Math.min((cw - 10) / 46, (ch - 38) / 64));
+    else {
+      const sc = Math.min((cw - 14) / 48, (ch - 38) / 80);
+      ctx.save(); ctx.translate(pcx, pcy); ctx.scale(sc, sc);
+      drawBag({ h: 44, w: 72, pal: item.pal, ears: item.ears, motif: item.motif, seed: i * 7.3 });
+      ctx.restore();
+    }
+    ctx.restore();
+    if (!owned && !afford) { ctx.fillStyle = 'rgba(255,246,232,0.5)'; roundRect(ctx, cx0 + 2, cy0 + 2, cw - 4, ch - 4, 14); ctx.fill(); }
+    // name & status
+    drawText(item.name, pcx, cy0 + ch - 26, fitSize(item.name, 13, cw - 8), '#6a3f8a', 'center', false);
+    const sy = cy0 + ch - 11;
+    if (wearing) drawText('WEARING', pcx, sy, 12, '#3f9a2a', 'center', false);
+    else if (owned) drawText(isPj ? 'Tap to wear' : 'OWNED', pcx, sy, 12, '#3f9a2a', 'center', false);
+    else if (pending) drawText('Tap to buy!', pcx, sy, fitSize('Tap to buy!', 12, cw - 8), '#ff4f9a', 'center', false);
+    else {
+      const str = String(item.price);
+      ctx.font = `bold 13px ${FONT}`;
+      const tw = ctx.measureText(str).width;
+      drawCoin(pcx - tw / 2 - 4, sy, 0, 0.6);
+      drawText(str, pcx - tw / 2 + 4, sy + 1, 13, afford ? '#b07a14' : '#a08aa8', 'left', false);
+    }
+  });
+
+  if (game.shopNote && game.time - game.shopNote.t < 2.2) {
+    const n = game.shopNote, a = clamp((2.2 - (game.time - n.t)) / 0.4, 0, 1);
+    ctx.globalAlpha = a;
+    const ns = fitSize(n.text, 16, pw - 60);
+    ctx.font = `bold ${ns}px ${FONT}`;
+    const nw = ctx.measureText(n.text).width + 30;
+    ctx.fillStyle = '#fff'; roundRect(ctx, W / 2 - nw / 2, H - 112, nw, 30, 15); ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = n.color; ctx.stroke();
+    drawText(n.text, W / 2, H - 96, ns, n.color, 'center', false);
+    ctx.globalAlpha = 1;
+  }
+  uiButton(W / 2 - 75, H - 70, 150, 42, 'DONE', closeShop, '#9be564', 20);
 }
 
 function drawGameOver() {
   const t = Math.min(1, game.overT / 0.35), e = easeOutBack(t);
   ctx.fillStyle = `rgba(20,8,35,${0.55 * t})`;
   ctx.fillRect(0, 0, W, H);
-  const pw = Math.min(W - 24, 400), ph = 380;
+  const pw = Math.min(W - 24, 400), ph = 420;
   ctx.save();
   ctx.translate(W / 2, H / 2);
   ctx.scale(e, e);
@@ -1908,8 +2481,16 @@ function drawGameOver() {
   const nextStr = next ? `Next: ${next[1]} at ${next[0]}` : 'Maximum stinkiness achieved!';
   drawText(nextStr, 0, 124, fitSize(nextStr, 14, pw - 30), '#8a6aa0', 'center', false);
 
-  if (game.overT > 0.6 && Math.sin(game.time * 5) > -0.3) drawText('Tap to try again', 0, ph / 2 - 30, 22, '#fff');
+  // Toot Coins from this run
+  const coinStr = `+${game.runCoins} Toot Coin${game.runCoins === 1 ? '' : 's'}`;
+  ctx.font = `bold 17px ${FONT}`;
+  const cw = ctx.measureText(coinStr).width;
+  drawCoin(-cw / 2 - 6, 150, 0, 0.8);
+  drawText(coinStr, -cw / 2 + 6, 151, 17, '#ffd65a', 'left');
+
+  if (game.overT > 0.6 && Math.sin(game.time * 5) > -0.3) drawText('Tap to try again', 0, ph / 2 - 22, 22, '#fff');
   ctx.restore();
+  if (game.overT > 0.3) drawShopButton(W / 2, Math.min(H - 26, H / 2 + ph / 2 + 30));
 }
 
 function render(alpha) {
@@ -1917,6 +2498,7 @@ function render(alpha) {
   const pyR = lerp(player.prevY, player.y, alpha);
   ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
   ctx.fillStyle = '#1a1430'; ctx.fillRect(0, 0, W, H);
+  uiButtons = [];
 
   ctx.save();
   if (game.shake > 0) ctx.translate(rand(-1, 1) * game.shake, rand(-1, 1) * game.shake);
@@ -1924,16 +2506,21 @@ function render(alpha) {
   drawShadow(pyR);
   drawObstacles(camR);
   drawBeans(camR);
+  drawPickups(camR);
   drawParticles(camR, 'back');
   drawPlayer(pyR);
   drawParticles(camR, 'front');
   ctx.restore();
 
   if (game.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${game.flash * 0.6})`; ctx.fillRect(0, 0, W, H); }
+  if (player.fizzT > 0 && game.state === 'play') {     // a rosy, bubbly glow while fizzy
+    ctx.fillStyle = `rgba(255,140,200,${0.07 + 0.03 * Math.sin(game.time * 4)})`; ctx.fillRect(0, 0, W, H);
+  }
 
   if (game.state === 'title') drawTitle();
-  else drawHUD();
+  else if (game.state !== 'shop') drawHUD();
   if (game.state === 'over') drawGameOver();
+  if (game.state === 'shop') drawShop();
   drawMuteButton();
 }
 
