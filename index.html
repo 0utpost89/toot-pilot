@@ -1649,12 +1649,6 @@ function drawHead(ex, t) {
   ctx.quadraticCurveTo(7, -7, 3, -6);
   ctx.quadraticCurveTo(-2, -8, -6, -3);
   ctx.closePath(); ctx.fill();
-  // sleep mask pushed up on the forehead
-  ctx.strokeStyle = '#5aa8e0'; ctx.lineWidth = 1.8;
-  ctx.beginPath(); ctx.moveTo(1, -9); ctx.lineTo(-10, -5); ctx.stroke();
-  ctx.fillStyle = '#7ec8f2'; roundRect(ctx, 0, -12.5, 11, 5.5, 2.7); ctx.fill();
-  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(3, -9.8, 0.9, 0, TAU); ctx.arc(7.5, -9.8, 0.9, 0, TAU); ctx.fill();
-
   // blush
   ctx.fillStyle = ex === 'smug' ? 'rgba(255,110,140,0.55)' : 'rgba(255,130,150,0.35)';
   ctx.beginPath(); ctx.arc(1.5, 4, 2.2, 0, TAU); ctx.arc(10, 4, 2, 0, TAU); ctx.fill();
