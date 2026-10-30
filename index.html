@@ -1649,28 +1649,6 @@ function drawHead(ex, t) {
   ctx.quadraticCurveTo(7, -7, 3, -6);
   ctx.quadraticCurveTo(-2, -8, -6, -3);
   ctx.closePath(); ctx.fill();
-  // sleep mask pushed up on the forehead
-  ctx.strokeStyle = '#b48ae8'; ctx.lineWidth = 1.6;
-  ctx.beginPath(); ctx.moveTo(-1, -10.5); ctx.quadraticCurveTo(-6, -9, -10, -5.5); ctx.stroke();
-  ctx.fillStyle = '#c9a8ff'; ctx.strokeStyle = '#fff4fb'; ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(-1.5, -12.5); ctx.quadraticCurveTo(5.5, -15.5, 12.5, -12.5);
-  ctx.quadraticCurveTo(13.8, -8.6, 10.5, -7); ctx.quadraticCurveTo(8, -6.6, 5.5, -8.2);
-  ctx.quadraticCurveTo(3, -6.6, 0.5, -7); ctx.quadraticCurveTo(-2.8, -8.6, -1.5, -12.5);
-  ctx.closePath(); ctx.fill(); ctx.stroke();
-  // sleepy closed eyes with lashes
-  ctx.strokeStyle = '#4a2b6e'; ctx.lineWidth = 0.7; ctx.lineCap = 'round';
-  for (const ex0 of [2.6, 8.6]) {
-    ctx.beginPath(); ctx.arc(ex0, -11.4, 1.9, 0.2, Math.PI - 0.2); ctx.stroke();
-    ctx.beginPath();
-    for (const a of [0.55, 1.57, 2.6]) {
-      ctx.moveTo(ex0 + Math.cos(a) * 1.9, -11.4 + Math.sin(a) * 1.9);
-      ctx.lineTo(ex0 + Math.cos(a) * 2.9, -11.4 + Math.sin(a) * 2.9);
-    }
-    ctx.stroke();
-  }
-  ctx.lineCap = 'butt';
-
   // blush
   ctx.fillStyle = ex === 'smug' ? 'rgba(255,110,140,0.55)' : 'rgba(255,130,150,0.35)';
   ctx.beginPath(); ctx.arc(1.5, 4, 2.2, 0, TAU); ctx.arc(10, 4, 2, 0, TAU); ctx.fill();
