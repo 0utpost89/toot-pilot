@@ -1098,6 +1098,52 @@ function toggleMusic() { Music.toggle(); Sound.click(); }
 let installPrompt = null, installArmed = false;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
 window.addEventListener('appinstalled', () => { installPrompt = null; });
+// Offline play: the service worker (sw.js) keeps a copy of these files. The
+// title screen shows whether that copy exists, with a button to make one.
+// Keep this list and the cache name in step with sw.js.
+const OFFLINE_CACHE = 'toot-pilot-v1';
+const OFFLINE_FILES = [
+  './', './index.html', './manifest.webmanifest',
+  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png', './icons/favicon-32.png',
+];
+const offline = {
+  supported: location.protocol.startsWith('http') && 'caches' in window,
+  ready: false, saving: false,
+  check() {
+    if (!this.supported) return;
+    caches.open(OFFLINE_CACHE).then(c => c.match('./index.html')).then(hit => { this.ready = !!hit; }).catch(() => {});
+  },
+  save() {
+    if (!this.supported || this.saving) return;
+    this.saving = true;
+    Sound.click();
+    caches.open(OFFLINE_CACHE).then(c => c.addAll(OFFLINE_FILES))
+      .then(() => {
+        this.ready = true;
+        Sound.coin();
+        popText('Saved! Ready to play offline', W / 2, H * 0.36, { screen: true, size: 20, color: '#9be564', rot: 0, max: 2.2, vy: -10 });
+      })
+      .catch(() => popText('Couldn\'t save. Are you online?', W / 2, H * 0.36, { screen: true, size: 18, color: '#ff8fab', rot: 0, max: 2.2, vy: -10 }))
+      .finally(() => { this.saving = false; });
+  },
+};
+offline.check();
+
+function drawOfflineStatus(x, y) {
+  if (!offline.supported) return;                 // the downloaded file is already offline
+  if (offline.ready) {
+    ctx.fillStyle = 'rgba(43,23,64,0.75)'; roundRect(ctx, x, y, 150, 30, 15); ctx.fill();
+    ctx.strokeStyle = '#9be564'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x + 13, y + 15); ctx.lineTo(x + 18, y + 20); ctx.lineTo(x + 27, y + 10); ctx.stroke();
+    ctx.lineCap = 'butt';
+    drawText('READY OFFLINE', x + 88, y + 16, 13, '#9be564', 'center', false);
+  } else {
+    uiButton(x, y, 150, 30, offline.saving ? 'SAVING...' : 'SAVE FOR OFFLINE', () => offline.save(), '#7ad3ff', 13);
+  }
+}
+
 function showInstallPrompt() {
   if (!installPrompt) return;
   const pr = installPrompt;
@@ -2628,6 +2674,7 @@ function drawTitle() {
   if (game.best > 0) drawText(`Best: ${game.best}  ·  ${RANKS[rankIndex(game.best)][1]}`, W / 2, 545, fitSize(`Best: ${game.best}  ·  ${RANKS[rankIndex(game.best)][1]}`, 16, W - 30), '#cfc2ea');
   drawShopButton(W / 2, 592);
   if (installPrompt) uiButton(12, 8, 136, 30, 'INSTALL APP', () => { installArmed = true; }, '#9be564', 14);
+  drawOfflineStatus(12, installPrompt ? 44 : 8);
 }
 
 // --- Buttons: drawn each frame and remembered so taps can find them ---
@@ -2916,7 +2963,8 @@ requestAnimationFrame(frame);
 
 // Keep a copy for offline play when served from the web (not as a local file).
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js')
+    .then(() => navigator.serviceWorker.ready).then(() => setTimeout(() => offline.check(), 1500)).catch(() => {}));
 }
 
 // Handy for debugging / tweaking from the console.
