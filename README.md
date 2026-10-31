@@ -32,6 +32,14 @@ Keep an eye on the windows for the odd plane flying past, and fireworks (especia
 
 Gravity, thrust, scroll speed, gap sizes, coin, fizz and chocolate chances are in the `CONFIG` object at the top of the script. Shop prices are in `PYJAMAS` and `BAG_DESIGNS`.
 
+## Seasons
+
+The game dresses up for the time of year: **Halloween** (10 Oct – 2 Nov: pumpkins, a ghost-costumed cat, bats, cobwebs, bunting), **Christmas** (1 Dec – 6 Jan: snow, Santa's sleigh, a fireplace with stockings and milk & cookies, a tree, wreaths, fairy lights) and **Valentine's** (1 – 15 Feb: roses, cards, candles, chocolates, rose petals, a heart garland).
+
+During a season the shop has a limited-time tab of seasonal pyjamas and bags. Anything you buy goes into your **Walk-in Wardrobe** (button on the title screen, or **W**) and stays there all year, even after it leaves the shop.
+
+To preview a season, add `?season=christmas` (or `halloween`, `valentines`, `none`) to the address.
+
 ## Music
 
 An original, bouncy mariachi-brass tune (two trumpets in harmony, oompah tuba, offbeat chords, light drums and the odd taxi "beep-beep") is synthesised live from the `SONG` data in the script, so there are no audio files. It speeds up a little as your score climbs; ranking up gets a trumpet fanfare, and crashing gets a sad trombone.
