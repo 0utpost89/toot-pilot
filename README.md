@@ -34,11 +34,11 @@ Gravity, thrust, scroll speed, gap sizes, coin, fizz and chocolate chances are i
 
 ## Seasons
 
-The game dresses up for the time of year: **Halloween** (10 Oct – 2 Nov: pumpkins, a ghost-costumed cat, bats, cobwebs, bunting), **Christmas** (1 Dec – 6 Jan: snow, Santa's sleigh, a fireplace with stockings and milk & cookies, a tree, wreaths, fairy lights) and **Valentine's** (1 – 15 Feb: roses, cards, candles, chocolates, rose petals, a heart garland).
+The game dresses up for the time of year: **Halloween** (10 Oct – 2 Nov: pumpkins, a ghost-costumed cat, bats, cobwebs, bunting), **Christmas** (1 Dec – 6 Jan: snow, Santa's sleigh, a fireplace with stockings and milk & cookies, a tree, wreaths, fairy lights) **Valentine's** (1 – 15 Feb: roses, cards, candles, chocolates, rose petals, a heart garland) and **Easter** (two weeks before Easter Sunday to Easter Monday, worked out each year: egg baskets, a chocolate bunny, daffodils, hanging painted eggs, egg bunting, eggs hidden on the floor and the Easter bunny hopping past outside).
 
 During a season the shop has a limited-time tab of seasonal pyjamas and bags. Anything you buy goes into your **Walk-in Wardrobe** (button on the title screen, or **W**) and stays there all year, even after it leaves the shop.
 
-To preview a season, add `?season=christmas` (or `halloween`, `valentines`, `none`) to the address.
+To preview a season, add `?season=christmas` (or `halloween`, `valentines`, `easter`, `none`) to the address.
 
 ## Music
 

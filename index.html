@@ -162,27 +162,45 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) { /* ignore */ } },
 };
 
-// Seasons switch on by date (local time). Add ?season=christmas (or halloween,
-// valentines, none) to the address to preview one.
+// Seasons switch on by date (local time). Each season's `range(year)` gives
+// its first and last day. Add ?season=christmas (or halloween, valentines,
+// easter, none) to the address to preview one.
+function easterSunday(y) {                           // the Anonymous Gregorian algorithm
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const n = h + l - 7 * m + 114;
+  return new Date(y, Math.floor(n / 31) - 1, (n % 31) + 1);
+}
+const dayOffset = (date, days) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 const SEASONS = {
-  halloween:  { name: 'Halloween',   short: 'SPOOKY', from: [10, 10], to: [11, 2], color: '#ff9a3c', greet: 'Happy Halloween!' },
-  christmas:  { name: 'Christmas',   short: 'XMAS',   from: [12, 1],  to: [1, 6],  color: '#e0455b', greet: 'Merry Christmas!' },
-  valentines: { name: "Valentine's", short: 'LOVE',   from: [2, 1],   to: [2, 15], color: '#ff6fa0', greet: "Happy Valentine's!" },
+  halloween:  { name: 'Halloween',   short: 'SPOOKY', color: '#ff9a3c', greet: 'Happy Halloween!',
+                range: y => [new Date(y, 9, 10), new Date(y, 10, 2)] },
+  christmas:  { name: 'Christmas',   short: 'XMAS',   color: '#e0455b', greet: 'Merry Christmas!',
+                range: y => [new Date(y, 11, 1), new Date(y + 1, 0, 6)] },
+  valentines: { name: "Valentine's", short: 'LOVE',   color: '#ff6fa0', greet: "Happy Valentine's!",
+                range: y => [new Date(y, 1, 1), new Date(y, 1, 15)] },
+  easter:     { name: 'Easter',      short: 'EASTER', color: '#58c47c', greet: 'Happy Easter!',
+                range: y => [dayOffset(easterSunday(y), -14), dayOffset(easterSunday(y), 1)] },   // 2 weeks before to Easter Monday
 };
+// The range of `key` that today falls in (checking this year's and last year's, for Christmas).
+function seasonRangeNow(key) {
+  const now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  for (const y of [now.getFullYear(), now.getFullYear() - 1]) {
+    const [from, to] = SEASONS[key].range(y);
+    if (today >= from && today <= to) return [from, to];
+  }
+  return null;
+}
 const SEASON = (() => {
   let q = null;
   try { q = new URLSearchParams(location.search).get('season'); } catch (e) { /* ignore */ }
   if (q !== null) return SEASONS[q] ? q : null;
-  const d = new Date(), md = (d.getMonth() + 1) * 100 + d.getDate();
-  for (const [key, sd] of Object.entries(SEASONS)) {
-    const f = sd.from[0] * 100 + sd.from[1], t = sd.to[0] * 100 + sd.to[1];
-    if (f <= t ? md >= f && md <= t : md >= f || md <= t) return key;
-  }
-  return null;
+  return Object.keys(SEASONS).find(seasonRangeNow) || null;
 })();
 function seasonUntil(key) {
-  const [m, d] = SEASONS[key].to;
-  return `${d} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1]}`;
+  const to = (seasonRangeNow(key) || SEASONS[key].range(new Date().getFullYear()))[1];
+  return `${to.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][to.getMonth()]}`;
 }
 
 function parseList(str) {
@@ -765,6 +783,7 @@ const MESSAGES = {
   fizz: ['Fizz-induced turbulence.', 'One bottle of fizz too many.', 'Lightly sparkling. Heavily crashing.', 'Flying under the influence. Of bubbles.'],
   halloween: ['Spooked by the ghost cat.', 'Trick or treat? Definitely trick.', 'That crash was a real scream.'],
   christmas: ["Straight onto Santa's naughty list.", 'Ho ho... oh no.', 'Not a creature was stirring. Except her bum.'],
+  easter: ['Egg-straordinary crash.', 'Hopped right into that one.', 'Somebody call the Easter bunny.'],
   valentines: ['Love hurts. So does that.', 'Roses are red, her face is too.', 'Fell head over heels. Literally.'],
   floor: ['Ran out of puff.', 'Gravity remains undefeated.', 'A soft landing. Mostly.'],
   ceiling: ['Too much gas, not enough ceiling.', 'Over-inflated. Hit the roof.', 'Ceiling inspection complete.'],
@@ -873,6 +892,9 @@ const BAG_DESIGNS = [
   { id: 'bag-heartbox',    name: 'Heart Box',     price: 140, season: 'valentines', pal: ['#c2233f', '#ffd166'], ears: 'bear', motif: 'hearts' },
   { id: 'bag-bouquet',     name: 'Rose Bouquet',  price: 180, season: 'valentines', pal: ['#ffd1e0', '#2f8a4f'], ears: 'none', motif: 'rose' },
   { id: 'bag-loveletter',  name: 'Love Letter',   price: 200, season: 'valentines', pal: ['#fff6f0', '#c2335a'], ears: 'cat',  motif: 'xo' },
+  { id: 'bag-easteregg',   name: 'Easter Egg',    price: 140, season: 'easter',     pal: ['#c9b6e8', '#fff6d0'], ears: 'none', motif: 'egg' },
+  { id: 'bag-chocbunny',   name: 'Choc Bunny',    price: 170, season: 'easter',     pal: ['#7a4a2a', '#ffd166'], ears: 'cat',  motif: 'bunny' },
+  { id: 'bag-chick',       name: 'Spring Chick',  price: 200, season: 'easter',     pal: ['#ffe27a', '#ff9a3c'], ears: 'none', motif: 'chick' },
 ];
 
 // A stack of mini backpacks lying on their sides, from the floor up to the gap.
@@ -1615,6 +1637,16 @@ function drawBackground(cam) {
     ctx.fillStyle = '#f0c75e'; ctx.beginPath(); ctx.ellipse(rx, ry, 95, 13, 0, 0, TAU); ctx.fill();
     ctx.fillStyle = '#5ab0a5'; ctx.beginPath(); ctx.ellipse(rx, ry, 65, 8, 0, 0, TAU); ctx.fill();
   }
+  if (SEASON === 'easter') {                         // eggs hidden about the floor for an egg hunt
+    const ES = 260;
+    for (let i = Math.floor((cam - 40) / ES); i <= Math.floor((cam + W + 40) / ES); i++) {
+      if (hash2(i, 60) < 0.45) continue;
+      const ex = i * ES + hash2(i, 61) * ES - cam, ey = floorY + 30 + hash2(i, 62) * 28;
+      ctx.save(); ctx.translate(ex, ey); ctx.rotate(1.2 + hash2(i, 63) * 0.6);
+      drawMotif('egg', 0, 0, 7, '#fff', i);
+      ctx.restore();
+    }
+  }
   if (SEASON === 'valentines') {                     // rose petals scattered on the floor
     const PS = 70;
     for (let i = Math.floor((cam - 40) / PS); i <= Math.floor((cam + W + 40) / PS); i++) {
@@ -1637,7 +1669,7 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
   ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
   const g = ctx.createLinearGradient(0, y, 0, y + h);
   g.addColorStop(0, mixColor('#0b1236', '#5a7fc4', dawn));
-  g.addColorStop(1, mixColor(SEASON === 'valentines' ? '#6a2a6a' : SEASON === 'halloween' ? '#3a2a5a' : '#2a3577', '#ffb37a', dawn));
+  g.addColorStop(1, mixColor(SEASON === 'valentines' ? '#6a2a6a' : SEASON === 'halloween' ? '#3a2a5a' : SEASON === 'easter' ? '#3a4a7a' : '#2a3577', '#ffb37a', dawn));
   ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
   // stars
   ctx.fillStyle = `rgba(255,255,230,${0.9 * (1 - dawn)})`;
@@ -1661,6 +1693,7 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
   }
   if (SEASON === 'christmas') drawSleigh(cam, dawn); else drawPlane(cam, dawn);
   if (SEASON === 'halloween') drawWindowBats();
+  if (SEASON === 'easter') drawWindowBunny(y + h, dawn);
   drawFireworks(cam);
   // rooftops
   ctx.fillStyle = mixColor('#151a3d', '#6a4a6a', dawn);
@@ -1927,6 +1960,11 @@ function drawSeasonGarland(scroll, top) {
       } else if (SEASON === 'halloween') {
         ctx.fillStyle = ['#ff8a1f', '#7b5bb5', '#1e1826'][(i + k) % 3];
         ctx.beginPath(); ctx.moveTo(bx - 7, by); ctx.lineTo(bx + 7, by); ctx.lineTo(bx, by + 13); ctx.fill();
+      } else if (SEASON === 'easter') {
+        ctx.fillStyle = ['#ff9fc0', '#7ad3ff', '#c49bff', '#ffd166', '#9be564'][(i + k) % 5];
+        ctx.beginPath(); ctx.ellipse(bx, by + 7, 4.5, 6, 0, 0, TAU); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(bx - 4, by + 7); ctx.lineTo(bx - 2, by + 5); ctx.lineTo(bx, by + 7); ctx.lineTo(bx + 2, by + 5); ctx.lineTo(bx + 4, by + 7); ctx.stroke();
       } else {
         ctx.fillStyle = k % 2 ? '#ff5a7a' : '#ffb3c7'; drawHeart(bx, by + 5, 5);
       }
@@ -1957,6 +1995,14 @@ function drawSeasonWall(x, y, seed) {
       ctx.beginPath(); ctx.moveTo(bx, by - 8); ctx.lineTo(bx, by); ctx.stroke();
       drawMotif('bats', bx, by + 2, 5, '#1e1826', k);
     }
+  } else if (SEASON === 'easter') {                  // painted eggs hanging on ribbons
+    ctx.strokeStyle = '#c9b6e8'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, y - 10); ctx.quadraticCurveTo(x + 55, y + 6, x + 110, y - 10); ctx.stroke();
+    for (let k = 0; k < 4; k++) {
+      const bx = x + 16 + k * 26, by = y - 2 + (k === 1 || k === 2 ? 4 : 0) + 10 + Math.sin(game.time * 2 + k + seed) * 1.5;
+      ctx.strokeStyle = '#ff9fc0'; ctx.beginPath(); ctx.moveTo(bx, by - 14); ctx.lineTo(bx, by - 8); ctx.stroke();
+      drawMotif('egg', bx, by, 9, '#fff', k + seed);
+    }
   } else {                                           // valentine cards pegged on a string
     ctx.strokeStyle = '#8a6a4a'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x, y - 10); ctx.quadraticCurveTo(x + 55, y + 6, x + 110, y - 10); ctx.stroke();
@@ -1982,12 +2028,74 @@ function drawSeasonFurniture(x, floorY, seed) {
     else { drawPumpkin(x + 20, floorY, 1); drawPumpkin(x + 62, floorY, 0.75); if (kind === 2) drawPumpkin(x + 92, floorY, 0.55); }
   } else if (SEASON === 'christmas') {
     if (pickN(2) === 0) drawFireplace(x, floorY); else drawXmasTree(x + 50, floorY);
+  } else if (SEASON === 'easter') {
+    const kind = pickN(3);
+    if (kind === 0) drawEggBasket(x + 40, floorY);
+    else if (kind === 1) { drawChocBunny(x + 30, floorY); drawDaffodils(x + 90, floorY); }
+    else { drawDaffodils(x + 20, floorY); drawEggBasket(x + 90, floorY); }
   } else {
     const kind = pickN(3);
     if (kind === 0) drawLoveTable(x, floorY);
     else if (kind === 1) { drawCandle(x + 10, floorY, 1); drawCandle(x + 26, floorY, 0.75); drawCandle(x + 40, floorY, 0.9); drawChocBox(x + 80, floorY - 8); }
     else drawLoveTable(x, floorY);
   }
+}
+
+// The Easter bunny hops along the rooftops outside.
+function drawWindowBunny(groundY, dawn) {
+  const x = ((game.time * 38) % (W + 300)) - 150, hop = Math.abs(Math.sin(game.time * 5)) * 16;
+  const y = groundY - 52 - hop;
+  ctx.fillStyle = mixColor('#e9e4f5', '#ffffff', dawn);
+  ctx.beginPath(); ctx.ellipse(x, y, 9, 7, -0.2, 0, TAU); ctx.fill();                       // body
+  ctx.beginPath(); ctx.arc(x + 8, y - 6, 5, 0, TAU); ctx.fill();                           // head
+  ctx.beginPath(); ctx.ellipse(x + 7, y - 15, 1.8, 6, -0.2, 0, TAU); ctx.ellipse(x + 11, y - 15, 1.8, 6, 0.25, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(x - 9, y - 2, 3, 0, TAU); ctx.fill();                           // tail
+  ctx.fillStyle = '#ff9fc0'; ctx.beginPath(); ctx.arc(x + 13, y - 6, 1.2, 0, TAU); ctx.fill();
+}
+
+function drawEggBasket(cx, floorY) {
+  const top = floorY - 30;
+  ctx.strokeStyle = '#a8724b'; ctx.lineWidth = 3;                                         // handle
+  ctx.beginPath(); ctx.ellipse(cx, top, 26, 26, 0, Math.PI, TAU); ctx.stroke();
+  [[-16, -6, 0], [-4, -10, 1], [9, -7, 2], [19, -4, 3], [2, -3, 4]].forEach(([dx, dy, k]) => {
+    ctx.save(); ctx.translate(cx + dx, top + dy); ctx.rotate((k - 2) * 0.2); drawMotif('egg', 0, 0, 8, '#fff', k); ctx.restore();
+  });
+  ctx.fillStyle = '#7fcf54';                                                               // grass
+  for (let k = 0; k < 9; k++) { ctx.beginPath(); ctx.moveTo(cx - 28 + k * 7, top + 2); ctx.lineTo(cx - 25 + k * 7, top - 8); ctx.lineTo(cx - 22 + k * 7, top + 2); ctx.fill(); }
+  ctx.fillStyle = '#c98a4a';                                                               // woven basket
+  ctx.beginPath(); ctx.moveTo(cx - 30, top); ctx.lineTo(cx + 30, top); ctx.lineTo(cx + 24, floorY); ctx.lineTo(cx - 24, floorY); ctx.fill();
+  ctx.strokeStyle = '#a8724b'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let r = 0; r < 3; r++) { ctx.moveTo(cx - 29 + r * 2, top + 8 + r * 8); ctx.lineTo(cx + 29 - r * 2, top + 8 + r * 8); }
+  for (let k = -3; k <= 3; k++) { ctx.moveTo(cx + k * 8.5, top); ctx.lineTo(cx + k * 7, floorY); }
+  ctx.stroke();
+}
+
+// A foil-wrapped chocolate bunny.
+function drawChocBunny(cx, floorY) {
+  const base = floorY;
+  ctx.fillStyle = '#7a4a2a';
+  ctx.beginPath(); ctx.ellipse(cx, base - 22, 18, 22, 0, 0, TAU); ctx.fill();               // body
+  ctx.beginPath(); ctx.arc(cx + 2, base - 50, 12, 0, TAU); ctx.fill();                     // head
+  ctx.beginPath(); ctx.ellipse(cx - 3, base - 70, 4, 13, -0.15, 0, TAU); ctx.ellipse(cx + 7, base - 70, 4, 13, 0.2, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#9a6238'; ctx.beginPath(); ctx.ellipse(cx - 6, base - 28, 5, 12, 0.2, 0, TAU); ctx.fill();   // shine
+  ctx.fillStyle = '#e8c25a'; ctx.fillRect(cx - 18, base - 14, 36, 14);                    // gold foil
+  ctx.fillStyle = '#e0455b'; ctx.fillRect(cx - 12, base - 46, 24, 4);                      // ribbon
+  ctx.beginPath(); ctx.arc(cx + 10, base - 44, 4, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ffe9a8'; ctx.fillRect(cx - 14, base - 11, 28, 2);
+}
+
+function drawDaffodils(cx, floorY) {
+  ctx.fillStyle = '#7ad3ff'; ctx.fillRect(cx - 10, floorY - 30, 20, 30);                    // jug
+  ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(cx - 7, floorY - 27, 3, 24);
+  [[-12, -66], [0, -74], [12, -64], [-5, -56], [8, -54]].forEach(([dx, dy], k) => {
+    const fx = cx + dx, fy = floorY + dy + Math.sin(game.time * 1.5 + k) * 1.2;
+    ctx.strokeStyle = '#4fae5a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx + dx * 0.3, floorY - 28); ctx.lineTo(fx, fy); ctx.stroke();
+    ctx.fillStyle = '#fff3a0';
+    for (let a = 0; a < 6; a++) { ctx.beginPath(); ctx.ellipse(fx + Math.cos(a * TAU / 6) * 4.5, fy + Math.sin(a * TAU / 6) * 4.5, 3.5, 2.2, a * TAU / 6, 0, TAU); ctx.fill(); }
+    ctx.fillStyle = '#ffa31a'; ctx.beginPath(); ctx.arc(fx, fy, 2.6, 0, TAU); ctx.fill();
+  });
 }
 
 function drawPumpkin(cx, floorY, s) {
@@ -2551,6 +2659,22 @@ function drawMotif(motif, x, y, r, trim, k) {
     if (k % 2) { ctx.moveTo(x - r * 0.6, y - r * 0.6); ctx.lineTo(x + r * 0.6, y + r * 0.6); ctx.moveTo(x + r * 0.6, y - r * 0.6); ctx.lineTo(x - r * 0.6, y + r * 0.6); }
     else ctx.arc(x, y, r * 0.65, 0, TAU);
     ctx.stroke(); ctx.lineCap = 'butt';
+  } else if (motif === 'egg') {
+    ctx.fillStyle = ['#ff9fc0', '#7ad3ff', '#c49bff', '#ffd166', '#9be564'][k % 5];
+    ctx.beginPath(); ctx.ellipse(x, y, r * 0.75, r, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = trim || '#fff'; ctx.lineWidth = Math.max(0.5, r * 0.18);
+    ctx.beginPath(); ctx.moveTo(x - r * 0.7, y); for (let i = 1; i <= 4; i++) ctx.lineTo(x - r * 0.7 + i * r * 0.35, y + (i % 2 ? -r * 0.25 : 0)); ctx.stroke();
+  } else if (motif === 'bunny') {
+    ctx.fillStyle = '#fbfaff'; ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = Math.max(0.4, r * 0.1);
+    ctx.beginPath(); ctx.ellipse(x - r * 0.35, y - r * 0.9, r * 0.22, r * 0.6, -0.15, 0, TAU); ctx.ellipse(x + r * 0.35, y - r * 0.9, r * 0.22, r * 0.6, 0.15, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, r * 0.7, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ff9fc0'; ctx.beginPath(); ctx.arc(x, y + r * 0.1, r * 0.13, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#2a1d3a'; ctx.beginPath(); ctx.arc(x - r * 0.25, y - r * 0.12, r * 0.09, 0, TAU); ctx.arc(x + r * 0.25, y - r * 0.12, r * 0.09, 0, TAU); ctx.fill();
+  } else if (motif === 'chick') {
+    ctx.fillStyle = '#ffd94d'; ctx.beginPath(); ctx.arc(x, y, r * 0.8, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#ff9a3c'; ctx.beginPath(); ctx.moveTo(x + r * 0.6, y - r * 0.05); ctx.lineTo(x + r * 1.05, y + r * 0.1); ctx.lineTo(x + r * 0.6, y + r * 0.25); ctx.fill();
+    ctx.fillStyle = '#2a1d3a'; ctx.beginPath(); ctx.arc(x + r * 0.3, y - r * 0.2, r * 0.12, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#f5c330'; ctx.beginPath(); ctx.ellipse(x - r * 0.25, y + r * 0.15, r * 0.35, r * 0.2, -0.4, 0, TAU); ctx.fill();
   } else if (motif === 'coins') {
     ctx.fillStyle = '#f5b82e'; ctx.strokeStyle = '#a86f12'; ctx.lineWidth = Math.max(0.5, r * 0.2);
     ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); ctx.stroke();
@@ -2727,6 +2851,9 @@ const PYJAMAS = [
   { id: 'pj-sweetheart', name: 'Sweetheart',        price: 150, season: 'valentines', body: '#e0455b', dark: '#c23347', out: '#7a1726', collar: '#ffffff', pattern: 'hearts',    pc: '#ffd1e0' },
   { id: 'pj-rosegarden', name: 'Rose Garden',       price: 190, season: 'valentines', body: '#fff1e6', dark: '#f0dccd', out: '#b06a7a', collar: '#e0455b', pattern: 'rose',      pc: '#e0455b' },
   { id: 'pj-xo',         name: 'Hugs & Kisses',     price: 220, season: 'valentines', body: '#ffb3d1', dark: '#ff94bd', out: '#b0476f', collar: '#e0455b', pattern: 'xo',        pc: '#c2335a' },
+  { id: 'pj-bunnyhop',   name: 'Bunny Hop',         price: 150, season: 'easter',     body: '#ffc7dc', dark: '#f4a9c6', out: '#b0607f', collar: '#9be564', pattern: 'bunny',     pc: '#fff' },
+  { id: 'pj-eggs',       name: 'Painted Eggs',      price: 190, season: 'easter',     body: '#a8e6cf', dark: '#86d2b5', out: '#3f8a6a', collar: '#c49bff', pattern: 'egg',       pc: '#fff' },
+  { id: 'pj-chick',      name: 'Little Chick',      price: 220, season: 'easter',     body: '#fff0a8', dark: '#f5dc7a', out: '#b0902a', collar: '#ff9a3c', pattern: 'chick',     pc: '#ff9a3c' },
 ];
 let outfit, PJ, PJ_DARK, PJ_OUT;
 function applyOutfit(o) { outfit = o; PJ = o.body; PJ_DARK = o.dark; PJ_OUT = o.out; }
@@ -3109,7 +3236,9 @@ function drawTitle() {
     drawText(sd.greet, W / 2, 372, fitSize(sd.greet, 20, W - 30), sd.color);
   }
   if (installPrompt) uiButton(12, 8, 136, 30, 'INSTALL APP', () => { installArmed = true; }, '#9be564', 14);
-  drawOfflineStatus(12, installPrompt ? 44 : 8);
+  const offY = installPrompt ? 44 : 8;
+  drawOfflineStatus(12, offY);
+  drawCoinCounter(16, offline.supported ? offY + 52 : 24, 18);   // her Toot Coins, under the badges
 }
 
 // --- Buttons: drawn each frame and remembered so taps can find them ---
@@ -3130,8 +3259,7 @@ function uiButton(x, y, w, h, label, onTap, fill = '#ff8fc8', size = 18, radius 
 function drawShopButton(cx, cy, w = 190) {
   const h = 42;
   uiButton(cx - w / 2, cy - h / 2, w, h, '', openShop, '#ff8fc8');
-  drawText('SHOP', cx - 38, cy + 1, 20, '#fff');
-  drawCoinCounter(cx + 2, cy, 17);
+  drawText('SHOP', cx, cy + 1, 20, '#fff');
   if (SEASON) {                                      // seasonal specials badge
     const sd = SEASONS[SEASON], bx = cx + w / 2 - 8, by = cy - h / 2 - 4;
     drawStar(bx, by, 22, Math.sin(game.time * 2) * 0.15, sd.color);
