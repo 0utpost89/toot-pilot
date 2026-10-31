@@ -162,6 +162,29 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) { /* ignore */ } },
 };
 
+// Seasons switch on by date (local time). Add ?season=christmas (or halloween,
+// valentines, none) to the address to preview one.
+const SEASONS = {
+  halloween:  { name: 'Halloween',   short: 'SPOOKY', from: [10, 10], to: [11, 2], color: '#ff9a3c', greet: 'Happy Halloween!' },
+  christmas:  { name: 'Christmas',   short: 'XMAS',   from: [12, 1],  to: [1, 6],  color: '#e0455b', greet: 'Merry Christmas!' },
+  valentines: { name: "Valentine's", short: 'LOVE',   from: [2, 1],   to: [2, 15], color: '#ff6fa0', greet: "Happy Valentine's!" },
+};
+const SEASON = (() => {
+  let q = null;
+  try { q = new URLSearchParams(location.search).get('season'); } catch (e) { /* ignore */ }
+  if (q !== null) return SEASONS[q] ? q : null;
+  const d = new Date(), md = (d.getMonth() + 1) * 100 + d.getDate();
+  for (const [key, sd] of Object.entries(SEASONS)) {
+    const f = sd.from[0] * 100 + sd.from[1], t = sd.to[0] * 100 + sd.to[1];
+    if (f <= t ? md >= f && md <= t : md >= f || md <= t) return key;
+  }
+  return null;
+})();
+function seasonUntil(key) {
+  const [m, d] = SEASONS[key].to;
+  return `${d} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1]}`;
+}
+
 function parseList(str) {
   try { const a = JSON.parse(str); return Array.isArray(a) ? a : []; } catch (e) { return []; }
 }
@@ -740,6 +763,9 @@ const MESSAGES = {
   lamp: ['Lights out!', 'She saw the light. Then she hit it.', 'Lamp: 1. Pilot: 0.'],
   bags: ['Buried by the bag collection.', 'One more bag was one too many.', 'Crash-landed in the backpack pile.', 'She can stop buying bags any time. Any time.'],
   fizz: ['Fizz-induced turbulence.', 'One bottle of fizz too many.', 'Lightly sparkling. Heavily crashing.', 'Flying under the influence. Of bubbles.'],
+  halloween: ['Spooked by the ghost cat.', 'Trick or treat? Definitely trick.', 'That crash was a real scream.'],
+  christmas: ["Straight onto Santa's naughty list.", 'Ho ho... oh no.', 'Not a creature was stirring. Except her bum.'],
+  valentines: ['Love hurts. So does that.', 'Roses are red, her face is too.', 'Fell head over heels. Literally.'],
   floor: ['Ran out of puff.', 'Gravity remains undefeated.', 'A soft landing. Mostly.'],
   ceiling: ['Too much gas, not enough ceiling.', 'Over-inflated. Hit the roof.', 'Ceiling inspection complete.'],
 };
@@ -767,7 +793,7 @@ const game = {
   runCoins: 0,
   particles: [],
   fireworks: [], fwT: 5,   // fireworks in the window skies
-  shopTab: 'pj', shopSel: null, shopNote: null,
+  shopTab: 'pj', shopSel: null, shopNote: null, shopMode: 'shop', shopPage: 0,
   spawned: 0,
   nextObstacleX: 0,
   lastGapCenter: 0,
@@ -837,6 +863,16 @@ const BAG_DESIGNS = [
   { id: 'bag-fireworks', name: 'Fireworks',       price: 220, pal: ['#1e2a66', '#ffd166'], ears: 'bear', motif: 'fireworks' },
   { id: 'bag-cash',      name: 'Cash Money',      price: 300, pal: ['#5fbf7a', '#f4f1ea'], ears: 'none', motif: 'coins' },
   { id: 'bag-gold',      name: 'Golden Grail',    price: 900, pal: ['#efc94c', '#fff6d0'], ears: 'cat',  motif: 'sparkle' },
+  // seasonal: only in the shop during their season, but kept for ever once bought
+  { id: 'bag-jack',        name: "Jack-o'-Bag",   price: 140, season: 'halloween',  pal: ['#2a2433', '#ff9a3c'], ears: 'none', motif: 'pumpkin' },
+  { id: 'bag-ghostcat',    name: 'Ghost Cat',     price: 170, season: 'halloween',  pal: ['#efeaf7', '#7b5bb5'], ears: 'cat',  motif: 'ghost' },
+  { id: 'bag-witch',       name: 'Witchy Web',    price: 200, season: 'halloween',  pal: ['#5b3f7a', '#d9ff7a'], ears: 'cat',  motif: 'web' },
+  { id: 'bag-santa',       name: "Santa's Sack",  price: 150, season: 'christmas',  pal: ['#d8343f', '#ffffff'], ears: 'none', motif: 'gift' },
+  { id: 'bag-gingerbread', name: 'Gingerbread',   price: 170, season: 'christmas',  pal: ['#b8733f', '#ffffff'], ears: 'bear', motif: 'candycane' },
+  { id: 'bag-frosty',      name: 'Frosty',        price: 210, season: 'christmas',  pal: ['#dff1ff', '#5f98cc'], ears: 'bear', motif: 'snowflake' },
+  { id: 'bag-heartbox',    name: 'Heart Box',     price: 140, season: 'valentines', pal: ['#c2233f', '#ffd166'], ears: 'bear', motif: 'hearts' },
+  { id: 'bag-bouquet',     name: 'Rose Bouquet',  price: 180, season: 'valentines', pal: ['#ffd1e0', '#2f8a4f'], ears: 'none', motif: 'rose' },
+  { id: 'bag-loveletter',  name: 'Love Letter',   price: 200, season: 'valentines', pal: ['#fff6f0', '#c2335a'], ears: 'cat',  motif: 'xo' },
 ];
 
 // A stack of mini backpacks lying on their sides, from the floor up to the gap.
@@ -1198,6 +1234,7 @@ window.addEventListener('keydown', e => {
     return;
   }
   if (e.code === 'KeyS' && (game.state === 'title' || game.state === 'over')) { Sound.unlock(); openShop(); return; }
+  if (e.code === 'KeyW' && game.state === 'title') { Sound.unlock(); openWardrobe(); return; }
   if (e.code === 'Escape' && game.state === 'over') { goToMenu(); return; }
   if (!ACTION_KEYS.has(e.code)) return;
   e.preventDefault();
@@ -1284,7 +1321,7 @@ function gameOver() {
   game.newBest = game.score > game.best;
   if (game.newBest) { game.best = game.score; store.set('tootPilot.best', game.best); }
   const extra = game.diedFizzy ? MESSAGES.fizz : MESSAGES[game.deathCause] || [];
-  game.message = pick(MESSAGES.any.concat(extra, extra));
+  game.message = pick(MESSAGES.any.concat(extra, extra, SEASON ? MESSAGES[SEASON] : []));
 }
 
 function addScore(n) {
@@ -1523,6 +1560,7 @@ function drawBackground(cam) {
     const h = hash2(i, 7), mx = i * MS + hash2(i, 8) * 90 - mcam;
     if (h < 0.34) drawShelf(mx, 335 + hash2(i, 9) * 30, i);
     else if (h < 0.68) drawFrame(mx, 300 + hash2(i, 10) * 40, i);
+    else if (SEASON && h >= 0.68) drawSeasonWall(mx, 320 + hash2(i, 16) * 30, i);   // seasonal decorations
     else if (h < 0.84) drawClock(mx + 40, 350);
   }
 
@@ -1530,7 +1568,8 @@ function drawBackground(cam) {
   const NS = 520, ncam = cam * 0.8;
   for (let i = Math.floor((ncam - 300) / NS); i <= Math.floor((ncam + W + 50) / NS); i++) {
     const h = hash2(i, 11), nx = i * NS + hash2(i, 12) * 200 - ncam;
-    if (h < 0.3) drawNightstand(nx, floorY);
+    if (SEASON && hash2(i, 14) < 0.6) drawSeasonFurniture(nx, floorY, i);
+    else if (h < 0.3) drawNightstand(nx, floorY);
     else if (h < 0.55) drawRadiator(nx, floorY);
     else if (h < 0.8) drawPlant(nx, floorY, i);
     else drawTeddy(nx + 30, floorY);
@@ -1551,6 +1590,7 @@ function drawBackground(cam) {
   const cg = ctx.createLinearGradient(0, top, 0, top + 22);
   cg.addColorStop(0, 'rgba(0,0,0,0.3)'); cg.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = cg; ctx.fillRect(-30, top, W + 60, 22);
+  if (SEASON) drawSeasonGarland(cam * 0.6, top);
 
   // Floor: skirting board + floorboards (scroll at full speed)
   ctx.fillStyle = '#ece2d2'; ctx.fillRect(-30, floorY, W + 60, 12);
@@ -1575,6 +1615,16 @@ function drawBackground(cam) {
     ctx.fillStyle = '#f0c75e'; ctx.beginPath(); ctx.ellipse(rx, ry, 95, 13, 0, 0, TAU); ctx.fill();
     ctx.fillStyle = '#5ab0a5'; ctx.beginPath(); ctx.ellipse(rx, ry, 65, 8, 0, 0, TAU); ctx.fill();
   }
+  if (SEASON === 'valentines') {                     // rose petals scattered on the floor
+    const PS = 70;
+    for (let i = Math.floor((cam - 40) / PS); i <= Math.floor((cam + W + 40) / PS); i++) {
+      for (let k = 0; k < 2; k++) {
+        const px = i * PS + hash2(i, 50 + k) * PS - cam, py = floorY + 18 + hash2(i, 52 + k) * 44;
+        ctx.fillStyle = k ? '#d6223f' : '#ff5a7a';
+        ctx.beginPath(); ctx.ellipse(px, py, 4.5, 2.6, hash2(i, 54 + k) * TAU, 0, TAU); ctx.fill();
+      }
+    }
+  }
 }
 
 function drawWindow(x, y, w, h, seed, dawn, cam) {
@@ -1587,7 +1637,7 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
   ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
   const g = ctx.createLinearGradient(0, y, 0, y + h);
   g.addColorStop(0, mixColor('#0b1236', '#5a7fc4', dawn));
-  g.addColorStop(1, mixColor('#2a3577', '#ffb37a', dawn));
+  g.addColorStop(1, mixColor(SEASON === 'valentines' ? '#6a2a6a' : SEASON === 'halloween' ? '#3a2a5a' : '#2a3577', '#ffb37a', dawn));
   ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
   // stars
   ctx.fillStyle = `rgba(255,255,230,${0.9 * (1 - dawn)})`;
@@ -1600,7 +1650,7 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
   const mg = ctx.createRadialGradient(mx, my, 10, mx, my, 55);
   mg.addColorStop(0, 'rgba(255,245,200,0.35)'); mg.addColorStop(1, 'rgba(255,245,200,0)');
   ctx.fillStyle = mg; ctx.fillRect(mx - 55, my - 55, 110, 110);
-  ctx.fillStyle = '#fff3c4'; ctx.beginPath(); ctx.arc(mx, my, 20, 0, TAU); ctx.fill();
+  ctx.fillStyle = SEASON === 'halloween' ? '#ffc56b' : '#fff3c4'; ctx.beginPath(); ctx.arc(mx, my, 20, 0, TAU); ctx.fill();
   ctx.fillStyle = 'rgba(200,190,150,0.5)';
   ctx.beginPath(); ctx.arc(mx - 6, my - 4, 4, 0, TAU); ctx.arc(mx + 7, my + 6, 3, 0, TAU); ctx.arc(mx + 4, my - 9, 2, 0, TAU); ctx.fill();
   // sun rises as the score climbs (she's been up all night!)
@@ -1609,7 +1659,8 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
     ctx.fillStyle = 'rgba(255,220,120,0.35)'; ctx.beginPath(); ctx.arc(sx, sy, 36, 0, TAU); ctx.fill();
     ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(sx, sy, 24, 0, TAU); ctx.fill();
   }
-  drawPlane(cam, dawn);
+  if (SEASON === 'christmas') drawSleigh(cam, dawn); else drawPlane(cam, dawn);
+  if (SEASON === 'halloween') drawWindowBats();
   drawFireworks(cam);
   // rooftops
   ctx.fillStyle = mixColor('#151a3d', '#6a4a6a', dawn);
@@ -1618,8 +1669,25 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
     ctx.fillRect(bx, y + h - bh, 30, bh);
     ctx.beginPath(); ctx.moveTo(bx - 3, y + h - bh); ctx.lineTo(bx + 15, y + h - bh - 12); ctx.lineTo(bx + 33, y + h - bh); ctx.fill();
   }
+  if (SEASON === 'christmas') {                      // snow on the rooftops
+    ctx.fillStyle = '#f4f8ff';
+    for (let k = 0; k < 4; k++) {
+      const bx = x + k * 34 - 6, bh = 18 + hash2(seed, k + 50) * 34;
+      ctx.beginPath(); ctx.moveTo(bx - 3, y + h - bh); ctx.lineTo(bx + 15, y + h - bh - 12); ctx.lineTo(bx + 33, y + h - bh);
+      ctx.lineTo(bx + 28, y + h - bh + 2); ctx.lineTo(bx + 15, y + h - bh - 8); ctx.lineTo(bx + 2, y + h - bh + 2); ctx.fill();
+    }
+  }
   ctx.fillStyle = '#ffd86b';
   for (let k = 0; k < 4; k++) if (hash2(seed, k + 60) < 0.5) ctx.fillRect(x + k * 34 + 6, y + h - 12, 5, 6);
+  if (SEASON === 'christmas') {                      // falling snow
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    for (let k = 0; k < 18; k++) {
+      const sp = 14 + hash2(seed, k + 90) * 16;
+      const fx = x + ((hash2(seed, k + 70) * w + Math.sin(game.time * 1.3 + k) * 6) % w + w) % w;
+      const fy = y + (hash2(seed, k + 80) * h + game.time * sp) % h;
+      ctx.beginPath(); ctx.arc(fx, fy, 1 + hash2(seed, k + 95) * 1.2, 0, TAU); ctx.fill();
+    }
+  }
   ctx.restore();
   // mullions & shine
   ctx.fillStyle = '#d9cbb4';
@@ -1629,6 +1697,9 @@ function drawWindow(x, y, w, h, seed, dawn, cam) {
   ctx.beginPath(); ctx.moveTo(x + 10, y); ctx.lineTo(x + 30, y); ctx.lineTo(x + 5, y + 40); ctx.lineTo(x, y + 40); ctx.fill();
   // sill
   ctx.fillStyle = '#e8dcc6'; ctx.fillRect(x - 16, y + h + 6, w + 32, 8);
+  if (SEASON === 'halloween') {                      // cobwebs in the top corners
+    drawCobweb(x, y, 1); drawCobweb(x + w, y, -1);
+  }
   // curtains + rod
   drawCurtain(x - 26, y - 16, 36, h + 40, false);
   drawCurtain(x + w - 10, y - 16, 36, h + 40, true);
@@ -1780,6 +1851,291 @@ function drawFireworks(cam) {
     }
     ctx.globalAlpha = 1;
   }
+}
+
+// ---------------- Seasonal decorations ----------------
+function drawCobweb(x, y, dir) {
+  ctx.strokeStyle = 'rgba(235,235,245,0.75)'; ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  for (let i = 0; i <= 4; i++) { const a = i / 4 * Math.PI / 2; ctx.moveTo(x, y); ctx.lineTo(x + dir * Math.cos(a) * 30, y + Math.sin(a) * 30); }
+  for (const rr of [10, 19, 28]) {
+    for (let i = 0; i <= 4; i++) {
+      const a = i / 4 * Math.PI / 2, px = x + dir * Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(px, py); else ctx.quadraticCurveTo(x + dir * Math.cos(a - 0.2) * rr * 0.8, y + Math.sin(a - 0.2) * rr * 0.8, px, py);
+    }
+  }
+  ctx.stroke();
+}
+
+function drawWindowBats() {
+  ctx.fillStyle = '#1a1020';
+  for (let k = 0; k < 3; k++) {
+    const bx = ((game.time * (45 + k * 12) + k * 260) % (W + 240)) - 120;
+    const by = 100 + k * 28 + Math.sin(game.time * 3 + k) * 10;
+    const flap = Math.sin(game.time * 14 + k * 2) * 0.6;
+    ctx.save(); ctx.translate(bx, by); ctx.scale(1, 1 - Math.abs(flap) * 0.4);
+    drawMotif('bats', 0, 0, 4, '#1a1020', 0);
+    ctx.restore();
+  }
+}
+
+// Santa's sleigh takes the plane's place at Christmas.
+function drawSleigh(cam, dawn) {
+  const span = 2600;
+  let x = (game.time * 50 - cam * 0.05) % span;
+  if (x < 0) x += span;
+  x -= 300;
+  const y = 112 + Math.sin(game.time * 0.4) * 10;
+  if (x < -140 || x > W + 120) return;
+  const col = mixColor('#3a2a4a', '#5a4a6a', dawn);
+  ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = 1;
+  for (let k = 0; k < 2; k++) {                       // two reindeer out front
+    const rx = x + 34 + k * 22, ry = y - 4 + Math.sin(game.time * 8 + k) * 1.5;
+    ctx.beginPath(); ctx.ellipse(rx, ry, 7, 3, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(rx + 5, ry - 1); ctx.lineTo(rx + 9, ry - 6); ctx.lineTo(rx + 12, ry - 5); ctx.lineTo(rx + 7, ry); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(rx + 9, ry - 6); ctx.lineTo(rx + 8, ry - 10); ctx.moveTo(rx + 10, ry - 6); ctx.lineTo(rx + 12, ry - 10); ctx.stroke();
+    for (const lx of [-5, -2, 2, 5]) { ctx.beginPath(); ctx.moveTo(rx + lx, ry + 2); ctx.lineTo(rx + lx + Math.sin(game.time * 10 + lx) * 1.5, ry + 7); ctx.stroke(); }
+    if (k === 1 && Math.sin(game.time * 4) > -0.2) {   // a glowing red nose on the leader
+      ctx.fillStyle = '#ff4a4a'; ctx.beginPath(); ctx.arc(rx + 12.5, ry - 5, 1.6, 0, TAU); ctx.fill(); ctx.fillStyle = col;
+    }
+  }
+  ctx.beginPath(); ctx.moveTo(x + 12, y); ctx.lineTo(x + 34, y - 4); ctx.stroke();    // reins
+  ctx.beginPath();                                    // the sleigh
+  ctx.moveTo(x - 14, y - 6); ctx.lineTo(x + 10, y - 6); ctx.quadraticCurveTo(x + 14, y - 6, x + 14, y - 1);
+  ctx.lineTo(x + 12, y + 3); ctx.lineTo(x - 10, y + 3); ctx.quadraticCurveTo(x - 16, y + 3, x - 14, y - 6); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x - 14, y + 7); ctx.lineTo(x + 14, y + 7); ctx.quadraticCurveTo(x + 18, y + 7, x + 17, y + 3); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x - 2, y - 10, 4.5, 0, TAU); ctx.fill();                   // Santa
+  ctx.beginPath(); ctx.moveTo(x - 6, y - 12); ctx.lineTo(x - 1, y - 18); ctx.lineTo(x + 3, y - 12); ctx.fill();
+  ctx.beginPath(); ctx.arc(x - 10, y - 9, 4, 0, TAU); ctx.fill();                     // sack of presents
+}
+
+// Bunting, fairy lights or a heart garland swagging along under the ceiling.
+function drawSeasonGarland(scroll, top) {
+  const SP = 150, y0 = top + 2;
+  for (let i = Math.floor((scroll - SP) / SP); i <= Math.floor((scroll + W + SP) / SP); i++) {
+    const x0 = i * SP - scroll, x1 = x0 + SP, sag = 26;
+    const at = t => [x0 + (x1 - x0) * t, y0 + Math.sin(t * Math.PI) * sag];
+    ctx.strokeStyle = SEASON === 'christmas' ? '#1f4a2a' : '#5a3a3a'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo((x0 + x1) / 2, y0 + sag * 2, x1, y0); ctx.stroke();
+    for (let k = 1; k < 8; k++) {
+      const [bx, by] = at(k / 8);
+      if (SEASON === 'christmas') {
+        const on = Math.sin(game.time * 3 + i * 1.7 + k * 2.1) > -0.3;
+        const c = ['#ff4a4a', '#ffd34d', '#4ad66a', '#5ab4ff', '#ff8ad8'][(i * 3 + k) % 5];
+        if (on) { ctx.fillStyle = c + '55'; ctx.beginPath(); ctx.arc(bx, by + 4, 6, 0, TAU); ctx.fill(); }
+        ctx.fillStyle = on ? c : '#555'; ctx.beginPath(); ctx.ellipse(bx, by + 4, 2.4, 3.4, 0, 0, TAU); ctx.fill();
+      } else if (SEASON === 'halloween') {
+        ctx.fillStyle = ['#ff8a1f', '#7b5bb5', '#1e1826'][(i + k) % 3];
+        ctx.beginPath(); ctx.moveTo(bx - 7, by); ctx.lineTo(bx + 7, by); ctx.lineTo(bx, by + 13); ctx.fill();
+      } else {
+        ctx.fillStyle = k % 2 ? '#ff5a7a' : '#ffb3c7'; drawHeart(bx, by + 5, 5);
+      }
+    }
+  }
+}
+
+// Wall decorations in the shelf/frame layer.
+function drawSeasonWall(x, y, seed) {
+  if (x > W + 80 || x < -120) return;
+  if (SEASON === 'christmas') {                      // a wreath with a red bow
+    const cx = x + 40;
+    for (let k = 0; k < 16; k++) {
+      const a = k / 16 * TAU;
+      ctx.fillStyle = k % 2 ? '#2f8a4f' : '#23703e';
+      ctx.beginPath(); ctx.ellipse(cx + Math.cos(a) * 22, y + Math.sin(a) * 22, 9, 6, a + 1, 0, TAU); ctx.fill();
+    }
+    ctx.fillStyle = '#e0455b';
+    for (let k = 0; k < 6; k++) { const a = k / 6 * TAU + 0.3; ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 22, y + Math.sin(a) * 22, 2.5, 0, TAU); ctx.fill(); }
+    ctx.beginPath(); ctx.moveTo(cx, y + 22); ctx.lineTo(cx - 12, y + 14); ctx.lineTo(cx - 12, y + 30); ctx.closePath();
+    ctx.moveTo(cx, y + 22); ctx.lineTo(cx + 12, y + 14); ctx.lineTo(cx + 12, y + 30); ctx.closePath(); ctx.fill();
+    ctx.fillRect(cx - 4, y + 22, 3, 14); ctx.fillRect(cx + 1, y + 22, 3, 14);
+  } else if (SEASON === 'halloween') {               // a string of paper bats
+    ctx.strokeStyle = '#2a1d1a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, y - 10); ctx.quadraticCurveTo(x + 50, y + 10, x + 100, y - 10); ctx.stroke();
+    for (let k = 0; k < 3; k++) {
+      const bx = x + 22 + k * 28, by = y + 2 + (k === 1 ? 4 : 0) + Math.sin(game.time * 2 + k + seed) * 2;
+      ctx.beginPath(); ctx.moveTo(bx, by - 8); ctx.lineTo(bx, by); ctx.stroke();
+      drawMotif('bats', bx, by + 2, 5, '#1e1826', k);
+    }
+  } else {                                           // valentine cards pegged on a string
+    ctx.strokeStyle = '#8a6a4a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, y - 10); ctx.quadraticCurveTo(x + 55, y + 6, x + 110, y - 10); ctx.stroke();
+    for (let k = 0; k < 3; k++) {
+      const bx = x + 18 + k * 34, by = y - 4 + (k === 1 ? 4 : 0);
+      ctx.save(); ctx.translate(bx, by); ctx.rotate((k - 1) * 0.12);
+      ctx.fillStyle = ['#ffd1e0', '#fff6f0', '#ffb3c7'][k]; ctx.fillRect(-10, 0, 20, 26);
+      ctx.strokeStyle = '#c2335a'; ctx.lineWidth = 1; ctx.strokeRect(-10, 0, 20, 26);
+      ctx.fillStyle = '#e0455b'; drawHeart(0, 13, 5);
+      ctx.fillStyle = '#c99a5a'; ctx.fillRect(-2, -3, 4, 6);
+      ctx.restore();
+    }
+  }
+}
+
+// Seasonal furniture against the wall.
+function drawSeasonFurniture(x, floorY, seed) {
+  if (x > W + 220 || x < -240) return;
+  const pickN = n => Math.floor(hash2(seed, 15) * n);
+  if (SEASON === 'halloween') {
+    const kind = pickN(3);
+    if (kind === 1) drawGhostCat(x + 40, floorY);
+    else { drawPumpkin(x + 20, floorY, 1); drawPumpkin(x + 62, floorY, 0.75); if (kind === 2) drawPumpkin(x + 92, floorY, 0.55); }
+  } else if (SEASON === 'christmas') {
+    if (pickN(2) === 0) drawFireplace(x, floorY); else drawXmasTree(x + 50, floorY);
+  } else {
+    const kind = pickN(3);
+    if (kind === 0) drawLoveTable(x, floorY);
+    else if (kind === 1) { drawCandle(x + 10, floorY, 1); drawCandle(x + 26, floorY, 0.75); drawCandle(x + 40, floorY, 0.9); drawChocBox(x + 80, floorY - 8); }
+    else drawLoveTable(x, floorY);
+  }
+}
+
+function drawPumpkin(cx, floorY, s) {
+  const r = 22 * s, cy = floorY - r * 0.85, flick = 0.75 + 0.25 * Math.sin(game.time * 9 + cx) * Math.sin(game.time * 5.3);
+  ctx.fillStyle = `rgba(255,170,60,${0.18 * flick})`; ctx.beginPath(); ctx.arc(cx, cy, r * 2, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#d96f12'; ctx.beginPath(); ctx.ellipse(cx - r * 0.45, cy, r * 0.6, r * 0.85, 0, 0, TAU); ctx.ellipse(cx + r * 0.45, cy, r * 0.6, r * 0.85, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#f28a1e'; ctx.beginPath(); ctx.ellipse(cx, cy, r * 0.6, r * 0.88, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#4f7a2a'; ctx.fillRect(cx - r * 0.1, cy - r * 1.1, r * 0.2, r * 0.35);
+  ctx.fillStyle = `rgb(255,${Math.round(190 + 50 * flick)},80)`;                       // carved, glowing face
+  ctx.beginPath();
+  ctx.moveTo(cx - r * 0.55, cy - r * 0.05); ctx.lineTo(cx - r * 0.18, cy - r * 0.05); ctx.lineTo(cx - r * 0.36, cy - r * 0.42);
+  ctx.moveTo(cx + r * 0.55, cy - r * 0.05); ctx.lineTo(cx + r * 0.18, cy - r * 0.05); ctx.lineTo(cx + r * 0.36, cy - r * 0.42);
+  ctx.moveTo(cx - r * 0.6, cy + r * 0.2); ctx.lineTo(cx - r * 0.3, cy + r * 0.32); ctx.lineTo(cx - r * 0.15, cy + r * 0.2);
+  ctx.lineTo(cx, cy + r * 0.34); ctx.lineTo(cx + r * 0.15, cy + r * 0.2); ctx.lineTo(cx + r * 0.3, cy + r * 0.32);
+  ctx.lineTo(cx + r * 0.6, cy + r * 0.2); ctx.lineTo(cx + r * 0.3, cy + r * 0.6); ctx.lineTo(cx - r * 0.3, cy + r * 0.6); ctx.closePath();
+  ctx.fill();
+}
+
+// A ghost costume: a sheet with eye holes over a cat (ears and a ginger tail give it away).
+function drawGhostCat(cx, floorY) {
+  const bob = Math.sin(game.time * 2) * 2, top = floorY - 62 + bob;
+  ctx.strokeStyle = '#e0a050'; ctx.lineWidth = 6; ctx.lineCap = 'round';                // tail peeking out
+  const sway = Math.sin(game.time * 2.5) * 6;
+  ctx.beginPath(); ctx.moveTo(cx + 18, floorY - 6); ctx.quadraticCurveTo(cx + 40, floorY - 10, cx + 38 + sway, floorY - 34); ctx.stroke();
+  ctx.strokeStyle = '#b8742a'; ctx.lineWidth = 6; ctx.setLineDash([3, 5]);
+  ctx.beginPath(); ctx.moveTo(cx + 18, floorY - 6); ctx.quadraticCurveTo(cx + 40, floorY - 10, cx + 38 + sway, floorY - 34); ctx.stroke();
+  ctx.setLineDash([]); ctx.lineCap = 'butt';
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(cx, floorY, 28, 4, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#f6f4ff'; ctx.strokeStyle = '#c9c4dc'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx - 26, floorY);
+  ctx.quadraticCurveTo(cx - 26, top + 22, cx - 16, top + 8);
+  ctx.lineTo(cx - 13, top - 6); ctx.lineTo(cx - 5, top + 3);                            // left ear tenting the sheet
+  ctx.quadraticCurveTo(cx, top + 1, cx + 5, top + 3);
+  ctx.lineTo(cx + 13, top - 6); ctx.lineTo(cx + 16, top + 8);                           // right ear
+  ctx.quadraticCurveTo(cx + 26, top + 22, cx + 26, floorY);
+  for (let k = 0; k < 4; k++) ctx.quadraticCurveTo(cx + 26 - k * 13 - 6.5, floorY - 7, cx + 13 - k * 13, floorY);   // wavy hem
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a1020';
+  ctx.beginPath(); ctx.ellipse(cx - 7, top + 18, 3.5, 5, 0, 0, TAU); ctx.ellipse(cx + 7, top + 18, 3.5, 5, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ffe066';                                                            // eyes glinting through
+  ctx.beginPath(); ctx.arc(cx - 7, top + 19, 1.6, 0, TAU); ctx.arc(cx + 7, top + 19, 1.6, 0, TAU); ctx.fill();
+}
+
+function drawFireplace(x, floorY) {
+  const w = 170, h = 128, top = floorY - h;
+  ctx.fillStyle = '#e8dcc6'; ctx.fillRect(x, top + 10, w, h - 10);                    // surround
+  ctx.fillStyle = '#c9b89e'; ctx.fillRect(x - 10, top, w + 20, 14);                     // mantel shelf
+  ctx.fillStyle = '#2a1712';
+  ctx.beginPath(); ctx.moveTo(x + 28, floorY); ctx.lineTo(x + 28, top + 54); ctx.quadraticCurveTo(x + w / 2, top + 30, x + w - 28, top + 54); ctx.lineTo(x + w - 28, floorY); ctx.fill();
+  const fx = x + w / 2, fy = floorY - 10;                                               // logs and fire
+  ctx.fillStyle = '#6b3a1e'; ctx.fillRect(fx - 32, fy - 4, 64, 9);
+  ctx.fillStyle = 'rgba(255,140,40,0.25)'; ctx.beginPath(); ctx.arc(fx, fy - 18, 46, 0, TAU); ctx.fill();
+  [['#ff5a1f', 22, 40], ['#ff9a1f', 16, 32], ['#ffe066', 9, 20]].forEach(([c, hw, hh], j) => {
+    ctx.fillStyle = c;
+    for (let k = -1; k <= 1; k++) {
+      const fl = Math.sin(game.time * (9 + j * 3) + k * 2) * 4, bx = fx + k * hw * 0.9;
+      ctx.beginPath(); ctx.moveTo(bx - hw * 0.6, fy); ctx.quadraticCurveTo(bx - hw * 0.5, fy - hh * 0.6, bx + fl * 0.5, fy - hh - Math.abs(fl));
+      ctx.quadraticCurveTo(bx + hw * 0.5, fy - hh * 0.6, bx + hw * 0.6, fy); ctx.fill();
+    }
+  });
+  [['#d8343f', x + 24], ['#2f8a4f', x + 72], ['#d8343f', x + 120]].forEach(([c, sx], k) => {   // stockings
+    const sy = top + 12, sw = Math.sin(game.time * 1.5 + k) * 0.05;
+    ctx.save(); ctx.translate(sx + 8, sy); ctx.rotate(sw);
+    ctx.fillStyle = c;
+    ctx.beginPath(); ctx.moveTo(-7, 6); ctx.lineTo(-7, 30); ctx.quadraticCurveTo(-7, 38, 2, 38); ctx.lineTo(12, 38);
+    ctx.quadraticCurveTo(18, 38, 18, 32); ctx.quadraticCurveTo(18, 27, 7, 27); ctx.lineTo(7, 6); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillRect(-8, 0, 16, 8);
+    ctx.restore();
+  });
+  drawSantaTable(x + w - 22, floorY);
+}
+
+// A little table in front of the fire: milk and cookies for Santa, a carrot for the reindeer.
+function drawSantaTable(x, floorY) {
+  const ty = floorY - 34;
+  ctx.fillStyle = '#8a5a3b'; ctx.fillRect(x + 6, ty, 5, 34); ctx.fillRect(x + 59, ty, 5, 34);
+  ctx.fillStyle = '#a8724b'; ctx.beginPath(); ctx.ellipse(x + 35, ty, 38, 7, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(x + 22, ty - 3, 15, 4, 0, 0, TAU); ctx.fill();          // plate
+  ctx.fillStyle = '#c98a4a';
+  [[16, -6], [26, -6], [21, -10]].forEach(([dx, dy]) => { ctx.beginPath(); ctx.ellipse(x + dx, ty + dy, 6, 2.6, 0, 0, TAU); ctx.fill(); });
+  ctx.fillStyle = '#4a2511'; [[15, -6.5], [27, -6], [21, -10.5]].forEach(([dx, dy]) => ctx.fillRect(x + dx, ty + dy, 1.5, 1.2));
+  ctx.fillStyle = 'rgba(220,235,255,0.9)'; ctx.fillRect(x + 43, ty - 18, 9, 17);           // glass of milk
+  ctx.fillStyle = '#fff'; ctx.fillRect(x + 44, ty - 13, 7, 12);
+  ctx.fillStyle = '#f28a1e';                                                                // carrot
+  ctx.beginPath(); ctx.moveTo(x + 55, ty - 4); ctx.lineTo(x + 70, ty - 2); ctx.lineTo(x + 55, ty); ctx.fill();
+  ctx.strokeStyle = '#4fae5a'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x + 55, ty - 2); ctx.lineTo(x + 50, ty - 6); ctx.moveTo(x + 55, ty - 2); ctx.lineTo(x + 50, ty + 1); ctx.stroke();
+}
+
+function drawXmasTree(cx, floorY) {
+  ctx.fillStyle = '#c0392b'; ctx.fillRect(cx - 12, floorY - 18, 24, 18);                    // pot
+  ctx.fillStyle = '#6b3a1e'; ctx.fillRect(cx - 4, floorY - 26, 8, 9);
+  [[0, 56, 40], [30, 46, 34], [56, 34, 30], [78, 22, 24]].forEach(([dy, hw, hh]) => {       // tiers
+    ctx.fillStyle = '#23703e';
+    ctx.beginPath(); ctx.moveTo(cx - hw, floorY - 24 - dy); ctx.lineTo(cx, floorY - 24 - dy - hh - 12); ctx.lineTo(cx + hw, floorY - 24 - dy); ctx.fill();
+    ctx.fillStyle = '#2f8a4f';
+    ctx.beginPath(); ctx.moveTo(cx - hw * 0.4, floorY - 24 - dy); ctx.lineTo(cx, floorY - 24 - dy - hh - 12); ctx.lineTo(cx + hw * 0.1, floorY - 24 - dy); ctx.fill();
+  });
+  const pts = [[-30, -40], [18, -48], [-8, -70], [24, -82], [-20, -96], [6, -112], [-12, -128], [10, -60], [-36, -30], [34, -32]];
+  pts.forEach(([dx, dy], k) => {
+    const on = Math.sin(game.time * 3 + k * 1.9) > -0.2, c = ['#ff4a4a', '#ffd34d', '#5ab4ff', '#ff8ad8'][k % 4];
+    if (on) { ctx.fillStyle = c + '55'; ctx.beginPath(); ctx.arc(cx + dx, floorY + dy, 6, 0, TAU); ctx.fill(); }
+    ctx.fillStyle = on ? c : '#7a7a7a'; ctx.beginPath(); ctx.arc(cx + dx, floorY + dy, 3, 0, TAU); ctx.fill();
+  });
+  ctx.fillStyle = '#ffd34d'; drawStarShape(cx, floorY - 148, 10); ctx.fill();                // star on top
+  [[-46, 16, '#7ad3ff'], [28, 20, '#c49bff'], [46, 13, '#ffd166']].forEach(([dx, sz, c]) => {   // presents
+    const px = cx + dx, py = floorY - sz;
+    ctx.fillStyle = c; ctx.fillRect(px - sz / 2, py, sz, sz);
+    ctx.fillStyle = '#e0455b'; ctx.fillRect(px - 1.5, py, 3, sz); ctx.fillRect(px - sz / 2, py + sz / 2 - 1.5, sz, 3);
+  });
+}
+
+function drawCandle(cx, floorY, s) {
+  const h = 34 * s, top = floorY - h, fl = Math.sin(game.time * 12 + cx) * 1.2;
+  ctx.fillStyle = 'rgba(255,200,120,0.18)'; ctx.beginPath(); ctx.arc(cx, top - 6, 18, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#fff3e0'; ctx.fillRect(cx - 5, top, 10, h);
+  ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.fillRect(cx + 2, top, 3, h);
+  ctx.fillStyle = '#ffb347'; ctx.beginPath(); ctx.ellipse(cx + fl * 0.3, top - 6, 3, 6, fl * 0.05, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#fff6b0'; ctx.beginPath(); ctx.ellipse(cx + fl * 0.3, top - 5, 1.5, 3.2, 0, 0, TAU); ctx.fill();
+}
+
+// A heart-shaped box of chocolates with its lid off.
+function drawChocBox(cx, y) {
+  ctx.save(); ctx.translate(cx, y);
+  ctx.fillStyle = '#c2233f'; drawHeart(0, 0, 14);
+  ctx.fillStyle = '#ffd166'; drawHeart(0, 0, 11.5);
+  ctx.fillStyle = '#5a2e14';
+  [[-6, -3], [0, -1], [6, -3], [-3, 4], [3, 4], [0, 9]].forEach(([dx, dy]) => { ctx.beginPath(); ctx.arc(dx, dy, 2.4, 0, TAU); ctx.fill(); });
+  ctx.restore();
+}
+
+// A side table with a vase of red roses, a card, a candle and a box of chocolates.
+function drawLoveTable(x, floorY) {
+  const ty = floorY - 50;
+  ctx.fillStyle = '#8a5a3b'; ctx.fillRect(x + 14, ty, 6, 50); ctx.fillRect(x + 86, ty, 6, 50);
+  ctx.fillStyle = '#b07a4f'; ctx.fillRect(x + 4, ty - 5, 98, 8);
+  ctx.fillStyle = 'rgba(200,230,255,0.6)';                                                  // vase
+  ctx.beginPath(); ctx.moveTo(x + 22, ty - 5); ctx.lineTo(x + 18, ty - 34); ctx.lineTo(x + 38, ty - 34); ctx.lineTo(x + 34, ty - 5); ctx.fill();
+  ctx.strokeStyle = '#2f8a4f'; ctx.lineWidth = 1.5;
+  [[-8, -62], [0, -70], [8, -60], [-3, -54], [5, -50]].forEach(([dx, dy]) => { ctx.beginPath(); ctx.moveTo(x + 28, ty - 30); ctx.lineTo(x + 28 + dx, ty + dy); ctx.stroke(); });
+  [[-8, -62], [0, -70], [8, -60], [-3, -54], [5, -50]].forEach(([dx, dy], k) => drawMotif('rose', x + 28 + dx, ty + dy, 5.5, '', k));
+  ctx.save(); ctx.translate(x + 56, ty - 5); ctx.rotate(-0.08);                             // card
+  ctx.fillStyle = '#ffd1e0'; ctx.fillRect(-10, -26, 20, 26); ctx.strokeStyle = '#c2335a'; ctx.lineWidth = 1; ctx.strokeRect(-10, -26, 20, 26);
+  ctx.fillStyle = '#e0455b'; drawHeart(0, -13, 5);
+  ctx.restore();
+  drawCandle(x + 74, ty - 4, 0.6);
+  drawChocBox(x + 90, ty - 14);
 }
 
 function drawCurtain(x0, y, w, h, flip) {
@@ -2137,6 +2493,64 @@ function drawMotif(motif, x, y, r, trim, k) {
       ctx.moveTo(x + Math.cos(a) * r * 0.45, y + Math.sin(a) * r * 0.45); ctx.lineTo(x + Math.cos(a) * r * 1.3, y + Math.sin(a) * r * 1.3);
     }
     ctx.stroke();
+  } else if (motif === 'pumpkin') {
+    ctx.fillStyle = '#f28a1e'; ctx.beginPath(); ctx.ellipse(x, y, r * 1.15, r * 0.95, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#4f7a2a'; ctx.fillRect(x - r * 0.15, y - r * 1.3, r * 0.3, r * 0.45);
+    ctx.fillStyle = '#2a1d1a';
+    ctx.beginPath(); ctx.moveTo(x - r * 0.6, y - r * 0.1); ctx.lineTo(x - r * 0.25, y - r * 0.1); ctx.lineTo(x - r * 0.42, y - r * 0.45);
+    ctx.moveTo(x + r * 0.6, y - r * 0.1); ctx.lineTo(x + r * 0.25, y - r * 0.1); ctx.lineTo(x + r * 0.42, y - r * 0.45);
+    ctx.moveTo(x - r * 0.6, y + r * 0.25); ctx.lineTo(x + r * 0.6, y + r * 0.25); ctx.lineTo(x, y + r * 0.6); ctx.fill();
+  } else if (motif === 'ghost') {
+    ctx.fillStyle = '#fbfaff'; ctx.strokeStyle = trim; ctx.lineWidth = Math.max(0.5, r * 0.18);
+    ctx.beginPath(); ctx.arc(x, y - r * 0.2, r * 0.8, Math.PI, 0);
+    ctx.lineTo(x + r * 0.8, y + r * 0.8); ctx.lineTo(x + r * 0.4, y + r * 0.55); ctx.lineTo(x, y + r * 0.8);
+    ctx.lineTo(x - r * 0.4, y + r * 0.55); ctx.lineTo(x - r * 0.8, y + r * 0.8); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#2a1d3a'; ctx.beginPath(); ctx.arc(x - r * 0.3, y - r * 0.2, r * 0.16, 0, TAU); ctx.arc(x + r * 0.3, y - r * 0.2, r * 0.16, 0, TAU); ctx.fill();
+  } else if (motif === 'web') {
+    ctx.strokeStyle = trim; ctx.lineWidth = Math.max(0.4, r * 0.15);
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) { const a = i * TAU / 6; ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * r * 1.3, y + Math.sin(a) * r * 1.3); }
+    for (const rr of [0.55, 1.05]) for (let i = 0; i <= 6; i++) {
+      const a = i * TAU / 6, px = x + Math.cos(a) * r * rr, py = y + Math.sin(a) * r * rr;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  } else if (motif === 'snowflake') {
+    ctx.strokeStyle = trim; ctx.lineWidth = Math.max(0.5, r * 0.2);
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = i * TAU / 6 + 0.3, c = Math.cos(a), sn = Math.sin(a);
+      ctx.moveTo(x, y); ctx.lineTo(x + c * r * 1.2, y + sn * r * 1.2);
+      ctx.moveTo(x + c * r * 0.7, y + sn * r * 0.7); ctx.lineTo(x + Math.cos(a + 0.6) * r * 0.95, y + Math.sin(a + 0.6) * r * 0.95);
+    }
+    ctx.stroke();
+  } else if (motif === 'holly') {
+    ctx.fillStyle = '#2f8a4f';
+    ctx.beginPath(); ctx.ellipse(x - r * 0.6, y, r * 0.75, r * 0.32, -0.5, 0, TAU); ctx.ellipse(x + r * 0.6, y, r * 0.75, r * 0.32, 0.5, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#e0455b';
+    ctx.beginPath(); ctx.arc(x - r * 0.18, y - r * 0.25, r * 0.28, 0, TAU); ctx.arc(x + r * 0.2, y - r * 0.3, r * 0.28, 0, TAU); ctx.arc(x, y + r * 0.05, r * 0.28, 0, TAU); ctx.fill();
+  } else if (motif === 'gift') {
+    ctx.fillStyle = ['#2f8a4f', '#ffd166', '#7ad3ff', '#c49bff'][k % 4]; ctx.fillRect(x - r * 0.8, y - r * 0.6, r * 1.6, r * 1.4);
+    ctx.fillStyle = '#e0455b'; ctx.fillRect(x - r * 0.15, y - r * 0.6, r * 0.3, r * 1.4); ctx.fillRect(x - r * 0.8, y + r * 0.02, r * 1.6, r * 0.28);
+    ctx.beginPath(); ctx.ellipse(x - r * 0.3, y - r * 0.8, r * 0.32, r * 0.2, 0.5, 0, TAU); ctx.ellipse(x + r * 0.3, y - r * 0.8, r * 0.32, r * 0.2, -0.5, 0, TAU); ctx.fill();
+  } else if (motif === 'candycane') {
+    ctx.lineCap = 'round'; ctx.lineWidth = Math.max(0.8, r * 0.45);
+    const cane = () => { ctx.beginPath(); ctx.moveTo(x + r * 0.2, y + r * 1.2); ctx.lineTo(x + r * 0.2, y - r * 0.4); ctx.arc(x - r * 0.25, y - r * 0.4, r * 0.45, 0, Math.PI, true); ctx.stroke(); };
+    ctx.strokeStyle = '#ffffff'; cane();
+    ctx.strokeStyle = '#e0455b'; ctx.setLineDash([r * 0.35, r * 0.35]); cane(); ctx.setLineDash([]);
+    ctx.lineCap = 'butt';
+  } else if (motif === 'rose') {
+    ctx.fillStyle = '#2f8a4f'; ctx.beginPath(); ctx.ellipse(x + r * 0.7, y + r * 0.6, r * 0.55, r * 0.22, 0.6, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#d6223f'; ctx.beginPath(); ctx.arc(x, y, r * 0.8, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#8f1028'; ctx.lineWidth = Math.max(0.4, r * 0.15);
+    ctx.beginPath(); ctx.arc(x, y, r * 0.45, 0.3, TAU - 0.6); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x + r * 0.1, y - r * 0.05, r * 0.18, 0, TAU * 0.75); ctx.stroke();
+  } else if (motif === 'xo') {
+    ctx.strokeStyle = trim; ctx.lineWidth = Math.max(0.6, r * 0.3); ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (k % 2) { ctx.moveTo(x - r * 0.6, y - r * 0.6); ctx.lineTo(x + r * 0.6, y + r * 0.6); ctx.moveTo(x + r * 0.6, y - r * 0.6); ctx.lineTo(x - r * 0.6, y + r * 0.6); }
+    else ctx.arc(x, y, r * 0.65, 0, TAU);
+    ctx.stroke(); ctx.lineCap = 'butt';
   } else if (motif === 'coins') {
     ctx.fillStyle = '#f5b82e'; ctx.strokeStyle = '#a86f12'; ctx.lineWidth = Math.max(0.5, r * 0.2);
     ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); ctx.stroke();
@@ -2303,6 +2717,16 @@ const PYJAMAS = [
   { id: 'pj-emo',       name: 'Midnight Emo',     price: 220, body: '#2e2838', dark: '#1f1a27', out: '#0e0b12', collar: '#ff4d6d', pattern: 'bats',      pc: '#e9e3f2' },
   { id: 'pj-fireworks', name: 'Fireworks Fiesta', price: 320, body: '#273a8a', dark: '#1b2a66', out: '#0e173d', collar: '#ff8fc8', pattern: 'fireworks', pc: '#fff' },
   { id: 'pj-gold',      name: 'Golden Glam',      price: 750, body: '#f2cf63', dark: '#d9ac3a', out: '#8a6512', collar: '#fff6d0', pattern: 'sparkle',   pc: '#fff' },
+  // seasonal
+  { id: 'pj-pumpkin',    name: 'Pumpkin Patch',     price: 150, season: 'halloween',  body: '#2b2233', dark: '#1e1826', out: '#0d0a12', collar: '#ff9a3c', pattern: 'pumpkin',   pc: '#ff9a3c' },
+  { id: 'pj-ghostly',    name: 'Ghostly Glow',      price: 180, season: 'halloween',  body: '#7b5bb5', dark: '#634697', out: '#3a2766', collar: '#d9ff7a', pattern: 'ghost',     pc: '#3a2766' },
+  { id: 'pj-spider',     name: 'Spider Silk',       price: 220, season: 'halloween',  body: '#5a5a6e', dark: '#46465a', out: '#25252f', collar: '#ff9a3c', pattern: 'web',       pc: '#e6e6f0' },
+  { id: 'pj-candycane',  name: 'Candy Cane',        price: 160, season: 'christmas',  body: '#fbf5f0', dark: '#e9ddd6', out: '#a83a4a', collar: '#2f9a5a', pattern: 'candycane', pc: '#e0455b' },
+  { id: 'pj-snowflake',  name: 'Snowflake Sleeper', price: 190, season: 'christmas',  body: '#7fb8e8', dark: '#5f98cc', out: '#2f5f8f', collar: '#ffffff', pattern: 'snowflake', pc: '#ffffff' },
+  { id: 'pj-holly',      name: 'Festive Holly',     price: 230, season: 'christmas',  body: '#2f8a4f', dark: '#23703e', out: '#123f22', collar: '#e0455b', pattern: 'holly',     pc: '#e0455b' },
+  { id: 'pj-sweetheart', name: 'Sweetheart',        price: 150, season: 'valentines', body: '#e0455b', dark: '#c23347', out: '#7a1726', collar: '#ffffff', pattern: 'hearts',    pc: '#ffd1e0' },
+  { id: 'pj-rosegarden', name: 'Rose Garden',       price: 190, season: 'valentines', body: '#fff1e6', dark: '#f0dccd', out: '#b06a7a', collar: '#e0455b', pattern: 'rose',      pc: '#e0455b' },
+  { id: 'pj-xo',         name: 'Hugs & Kisses',     price: 220, season: 'valentines', body: '#ffb3d1', dark: '#ff94bd', out: '#b0476f', collar: '#e0455b', pattern: 'xo',        pc: '#c2335a' },
 ];
 let outfit, PJ, PJ_DARK, PJ_OUT;
 function applyOutfit(o) { outfit = o; PJ = o.body; PJ_DARK = o.dark; PJ_OUT = o.out; }
@@ -2317,6 +2741,11 @@ function drawPjPattern(o) {
   } else if (o.pattern === 'stripes') {
     ctx.fillStyle = o.pc;
     for (let x = -10; x < 12; x += 5) ctx.fillRect(x, -10, 2, 26);
+  } else if (o.pattern === 'candycane') {
+    ctx.strokeStyle = o.pc; ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    for (let x = -22; x < 14; x += 6) { ctx.moveTo(x, 18); ctx.lineTo(x + 20, -12); }
+    ctx.stroke();
   } else {
     [[-5, -3], [4, -6], [5, 6], [-3, 9], [-7, 5], [0, 1]].forEach(([dx, dy], k) => drawMotif(o.pattern, dx, dy, 1.7, o.pc, k));
   }
@@ -2672,7 +3101,13 @@ function drawTitle() {
   lines.forEach(([l, c], i) => drawText(l, W / 2, 400 + i * (ls + 10), ls, c));
   if (Math.sin(game.time * 5) > -0.3) drawText('Tap to start!', W / 2, 505, 26, '#ffe066');
   if (game.best > 0) drawText(`Best: ${game.best}  ·  ${RANKS[rankIndex(game.best)][1]}`, W / 2, 545, fitSize(`Best: ${game.best}  ·  ${RANKS[rankIndex(game.best)][1]}`, 16, W - 30), '#cfc2ea');
-  drawShopButton(W / 2, 592);
+  const rowW = Math.min(W - 20, 400), ww = Math.round(rowW * 0.46), sw = rowW - ww - 10, x0 = W / 2 - rowW / 2;
+  uiButton(x0, 571, ww, 42, 'WARDROBE', openWardrobe, '#c49bff', 18);
+  drawShopButton(x0 + ww + 10 + sw / 2, 592, sw);
+  if (SEASON) {
+    const sd = SEASONS[SEASON];
+    drawText(sd.greet, W / 2, 372, fitSize(sd.greet, 20, W - 30), sd.color);
+  }
   if (installPrompt) uiButton(12, 8, 136, 30, 'INSTALL APP', () => { installArmed = true; }, '#9be564', 14);
   drawOfflineStatus(12, installPrompt ? 44 : 8);
 }
@@ -2697,14 +3132,38 @@ function drawShopButton(cx, cy, w = 190) {
   uiButton(cx - w / 2, cy - h / 2, w, h, '', openShop, '#ff8fc8');
   drawText('SHOP', cx - 38, cy + 1, 20, '#fff');
   drawCoinCounter(cx + 2, cy, 17);
+  if (SEASON) {                                      // seasonal specials badge
+    const sd = SEASONS[SEASON], bx = cx + w / 2 - 8, by = cy - h / 2 - 4;
+    drawStar(bx, by, 22, Math.sin(game.time * 2) * 0.15, sd.color);
+    drawText(sd.short, bx, by + 1, fitSize(sd.short, 10, 30), '#fff', 'center', false);
+  }
 }
 
-function openShop() {
+// The shop and the walk-in wardrobe share one screen (game.state 'shop').
+function openShop(mode = 'shop') {
   if (game.state !== 'title' && !(game.state === 'over' && game.overT > 0.3)) return;
   releaseAll();
   game.state = 'shop';
+  game.shopMode = mode;
+  game.shopTab = mode === 'shop' && SEASON ? 'season' : 'pj';
+  game.shopPage = 0;
   game.shopSel = null; game.shopNote = null;
+  if (mode === 'shop' && SEASON) shopNote(`${SEASONS[SEASON].name} specials, only until ${seasonUntil(SEASON)}!`, SEASONS[SEASON].color);
   Sound.click();
+}
+function openWardrobe() { openShop('wardrobe'); }
+const isPjItem = item => item.id.startsWith('pj-');
+const ownsItem = item => item.price === 0 || wallet.owned.has(item.id);
+function shopTabs() {
+  const tabs = [['pj', 'PYJAMAS'], ['bags', 'BAGS']];
+  if (game.shopMode === 'shop' && SEASON) tabs.push(['season', SEASONS[SEASON].name.toUpperCase()]);
+  return tabs;
+}
+function shopItems() {
+  const t = game.shopTab;
+  if (game.shopMode === 'wardrobe') return (t === 'pj' ? PYJAMAS : BAG_DESIGNS).filter(ownsItem);
+  if (t === 'season') return PYJAMAS.concat(BAG_DESIGNS).filter(i => i.season === SEASON);
+  return (t === 'pj' ? PYJAMAS : BAG_DESIGNS).filter(i => !i.season);
 }
 function closeShop() { goToMenu(); }
 
@@ -2720,13 +3179,13 @@ function goToMenu() {
 function shopNote(text, color = '#2b1740') { game.shopNote = { text, color, t: game.time }; }
 
 function shopTap(item, isPj) {
-  const owned = item.price === 0 || wallet.owned.has(item.id);
+  const owned = ownsItem(item);
   if (owned) {
     game.shopSel = null;
     if (isPj) {
       if (wallet.pj !== item.id) { wallet.pj = item.id; wallet.save(); applyOutfit(item); Sound.blip(); }
       shopNote(`Wearing ${item.name}`);
-    } else { Sound.click(); shopNote('Already in your bag stacks!'); }
+    } else { Sound.click(); shopNote(game.shopMode === 'wardrobe' ? 'This one turns up in your bag stacks!' : 'Already in your wardrobe!'); }
     return;
   }
   if (wallet.coins < item.price) {
@@ -2742,7 +3201,7 @@ function shopTap(item, isPj) {
   wallet.save();
   game.shopSel = null;
   Sound.buy();
-  shopNote(isPj ? `New pyjamas! Wearing ${item.name}` : `${item.name} will turn up in the stacks!`, '#2f8a4a');
+  shopNote(isPj ? `New pyjamas! Wearing ${item.name}` : `${item.name} is in your wardrobe and stacks!`, '#2f8a4a');
 }
 
 // Draws the pilot in some pyjamas, centred at (x, y), for the shop.
@@ -2763,29 +3222,40 @@ function drawShop() {
   const pw = Math.min(W - 16, 560), px = (W - pw) / 2, top = 14, ph = H - 28;
   ctx.fillStyle = '#fff6e8'; roundRect(ctx, px, top, pw, ph, 22); ctx.fill();
   ctx.lineWidth = 4; ctx.strokeStyle = '#2b1740'; ctx.stroke();
+  const wardrobe = game.shopMode === 'wardrobe';
   ctx.save(); roundRect(ctx, px, top, pw, ph, 22); ctx.clip();
-  ctx.fillStyle = '#ff8fc8'; ctx.fillRect(px, top, pw, 56);
+  ctx.fillStyle = wardrobe ? '#c49bff' : '#ff8fc8'; ctx.fillRect(px, top, pw, 56);
   ctx.restore();
   ctx.beginPath(); ctx.moveTo(px, top + 56); ctx.lineTo(px + pw, top + 56); ctx.stroke();
-  drawText('SHOP', px + 18, top + 29, 30, '#fff', 'left');
-  drawCoinCounter(Math.min(px + pw - 18, MUSIC_BTN.x - MUSIC_BTN.r - 10), top + 29, 20, 'right');   // keep clear of the sound buttons
+  const coinX = Math.min(px + pw - 18, MUSIC_BTN.x - MUSIC_BTN.r - 10);   // keep clear of the sound buttons
+  const title = wardrobe ? 'WALK-IN WARDROBE' : 'SHOP';
+  drawText(title, px + 18, top + 29, fitSize(title, 30, coinX - px - 110), '#fff', 'left');
+  drawCoinCounter(coinX, top + 29, 20, 'right');
 
   // tabs
-  const tabW = (pw - 36) / 2, tabY = top + 68;
-  [['pj', 'PYJAMAS'], ['bags', 'BAGS']].forEach(([id, label], i) => {
+  const tabs = shopTabs(), tabY = top + 68, tabW = (pw - 24 - (tabs.length - 1) * 8) / tabs.length;
+  tabs.forEach(([id, label], i) => {
     const on = game.shopTab === id;
-    uiButton(px + 12 + i * (tabW + 12), tabY, tabW, 36, label, () => {
-      if (game.shopTab !== id) { game.shopTab = id; game.shopSel = null; Sound.click(); }
-    }, on ? '#9be564' : '#c9b6e8', 17);
+    const fill = on ? (id === 'season' ? SEASONS[SEASON].color : '#9be564') : '#c9b6e8';
+    uiButton(px + 12 + i * (tabW + 8), tabY, tabW, 36, label, () => {
+      if (game.shopTab !== id) { game.shopTab = id; game.shopSel = null; game.shopPage = 0; Sound.click(); }
+    }, fill, 17);
   });
 
-  // item cards, 3 x 3
-  const isPj = game.shopTab === 'pj', items = isPj ? PYJAMAS : BAG_DESIGNS;
+  // item cards, 3 x 3 per page
+  const all = shopItems(), pages = Math.max(1, Math.ceil(all.length / 9));
+  game.shopPage = Math.min(game.shopPage || 0, pages - 1);
+  const items = all.slice(game.shopPage * 9, game.shopPage * 9 + 9);
   const gx = px + 12, gw = pw - 24, gap = 8, gridTop = tabY + 48, gridBottom = H - 80;
   const cw = (gw - gap * 2) / 3, ch = (gridBottom - gridTop - gap * 2) / 3;
+  if (!items.length) {
+    const msg = wardrobe ? 'No bags yet. Visit the shop!' : 'Nothing here right now';
+    drawText(msg, W / 2, (gridTop + gridBottom) / 2, fitSize(msg, 18, pw - 40), '#8a6aa0', 'center', false);
+  }
   items.forEach((item, i) => {
+    const isPj = isPjItem(item);
     const cx0 = gx + (i % 3) * (cw + gap), cy0 = gridTop + Math.floor(i / 3) * (ch + gap);
-    const owned = item.price === 0 || wallet.owned.has(item.id), wearing = isPj && wallet.pj === item.id;
+    const owned = ownsItem(item), wearing = isPj && wallet.pj === item.id;
     const pending = game.shopSel === item.id, afford = wallet.coins >= item.price;
     uiButton(cx0, cy0, cw, ch, '', () => shopTap(item, isPj), '#ffffff', 18, 14);
     ctx.lineWidth = 3;
@@ -2802,12 +3272,19 @@ function drawShop() {
       ctx.restore();
     }
     ctx.restore();
+    if (item.season) {                               // seasonal tag
+      const sd = SEASONS[item.season], tag = item.season === SEASON && !wardrobe ? 'LIMITED' : sd.short;
+      ctx.font = `bold 10px ${FONT}`;
+      const tw = ctx.measureText(tag).width + 12;
+      ctx.fillStyle = sd.color; roundRect(ctx, cx0 + 6, cy0 + 6, tw, 16, 8); ctx.fill();
+      drawText(tag, cx0 + 6 + tw / 2, cy0 + 14.5, 10, '#fff', 'center', false);
+    }
     if (!owned && !afford) { ctx.fillStyle = 'rgba(255,246,232,0.5)'; roundRect(ctx, cx0 + 2, cy0 + 2, cw - 4, ch - 4, 14); ctx.fill(); }
     // name & status
     drawText(item.name, pcx, cy0 + ch - 26, fitSize(item.name, 13, cw - 8), '#6a3f8a', 'center', false);
     const sy = cy0 + ch - 11;
     if (wearing) drawText('WEARING', pcx, sy, 12, '#3f9a2a', 'center', false);
-    else if (owned) drawText(isPj ? 'Tap to wear' : 'OWNED', pcx, sy, 12, '#3f9a2a', 'center', false);
+    else if (owned) drawText(isPj ? 'Tap to wear' : wardrobe ? 'IN STACKS' : 'OWNED', pcx, sy, 12, '#3f9a2a', 'center', false);
     else if (pending) drawText('Tap to buy!', pcx, sy, fitSize('Tap to buy!', 12, cw - 8), '#ff4f9a', 'center', false);
     else {
       const str = String(item.price);
@@ -2830,6 +3307,12 @@ function drawShop() {
     ctx.globalAlpha = 1;
   }
   uiButton(W / 2 - 75, H - 70, 150, 42, 'DONE', closeShop, '#9be564', 20);
+  if (pages > 1) {                                   // page arrows
+    const pg = game.shopPage, turn = d => () => { game.shopPage = (pg + d + pages) % pages; game.shopSel = null; Sound.click(); };
+    uiButton(W / 2 - 75 - 54, H - 70, 44, 42, '<', turn(-1), '#c9b6e8', 22);
+    uiButton(W / 2 + 75 + 10, H - 70, 44, 42, '>', turn(1), '#c9b6e8', 22);
+    drawText(`${pg + 1}/${pages}`, W / 2, H - 80, 12, '#8a6aa0', 'center', false);
+  }
 }
 
 function drawGameOver() {
